@@ -6,7 +6,8 @@
 <meta name="theme-color" content="#16423c">
 <title>Travel Claims</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon.svg">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.38.3/lib/msal-browser.min.js"></script>
@@ -97,16 +98,16 @@ a{color:var(--brand)}
     <div><label for="f-type">Expense type</label>
       <select id="f-type">
         <option>Food</option><option>Ticket</option><option>Auto Charge</option>
-        <option>Room Rent</option><option>Petrol</option><option>Other</option>
+        <option>Room Rent</option><option>Fuel</option><option>Other</option>
       </select></div>
   </div>
   <label for="f-project">Project ID</label>
-  <input id="f-project" list="dl-project" autocomplete="off" placeholder="SOIT-CAHO-2526-01-24-001">
+  <input id="f-project" list="dl-project" autocomplete="off" placeholder="Enter project ID">
   <datalist id="dl-project"></datalist>
 
   <div class="row">
-    <div><label for="f-location">Location</label><input id="f-location" list="dl-location"><datalist id="dl-location"></datalist></div>
-    <div><label for="f-pax">No of pax</label><input type="number" id="f-pax" min="1" value="1" inputmode="numeric"></div>
+    <div><label for="f-location">Location</label><input id="f-location" list="dl-location" placeholder="Enter location"><datalist id="dl-location"></datalist></div>
+    <div><label for="f-pax">No of pax</label><input type="number" id="f-pax" min="1" value="1" inputmode="numeric" placeholder="Enter no. of people"></div>
   </div>
 
   <div id="grp-food">
@@ -118,23 +119,26 @@ a{color:var(--brand)}
   </div>
 
   <div id="grp-fuel" hidden>
-    <div class="row3">
+    <div class="row">
+      <div><label for="f-fuel">Fuel</label><select id="f-fuel"><option>Petrol</option><option>Diesel</option></select></div>
       <div><label for="f-vehicle">Vehicle</label><select id="f-vehicle"><option>Bike</option><option>Car</option></select></div>
-      <div><label for="f-rate">Petrol ₹/L</label><input type="number" id="f-rate" step="0.01" inputmode="decimal"></div>
-      <div><label for="f-km">Running km</label><input type="number" id="f-km" step="0.1" inputmode="decimal"></div>
+    </div>
+    <div class="row">
+      <div><label for="f-rate" id="lbl-rate">Petrol rate today ₹/L</label><input type="number" id="f-rate" step="0.01" inputmode="decimal"></div>
+      <div><label for="f-km">Running km</label><input type="number" id="f-km" step="0.1" inputmode="decimal" placeholder="Enter running km"></div>
     </div>
   </div>
 
   <label for="f-names">Names</label>
-  <input id="f-names" placeholder="Sam, Shymon">
+  <input id="f-names" placeholder="Enter names (e.g. Sam, Shymon)">
 
   <div id="grp-bill">
     <label for="f-bill">Bill amount (₹)</label>
-    <input type="number" id="f-bill" step="0.01" inputmode="decimal">
+    <input type="number" id="f-bill" step="0.01" inputmode="decimal" placeholder="Enter bill amount">
   </div>
 
   <label for="f-remarks">Remarks</label>
-  <input id="f-remarks" placeholder="e.g. Caritas to Kottayam railway station – cash">
+  <input id="f-remarks" placeholder="Enter remarks (optional)">
 
   <div class="photo">
     <img id="f-preview" alt="Bill photo" hidden>
@@ -162,7 +166,7 @@ a{color:var(--brand)}
     <dl>
       <dt>Total</dt><dd id="t-total">₹0.00</dd>
       <dt><label for="l-advance" style="margin:0;font-weight:400">Advance</label></dt>
-      <dd><input type="number" id="l-advance" step="0.01" inputmode="decimal" style="width:120px;padding:6px 8px;text-align:right"></dd>
+      <dd><input type="number" id="l-advance" step="0.01" inputmode="decimal" placeholder="Enter advance" style="width:140px;padding:6px 8px;text-align:right"></dd>
     </dl>
   </div>
   <div id="l-deadline"></div>
@@ -178,7 +182,7 @@ a{color:var(--brand)}
   <div class="stack">
     <div>
       <label for="s-client">Microsoft app (client) ID</label>
-      <input id="s-client" placeholder="00000000-0000-0000-0000-000000000000" autocomplete="off">
+      <input id="s-client" placeholder="Enter Microsoft app (client) ID" autocomplete="off">
       <p class="muted">From your Azure app registration. Needed once.</p>
     </div>
     <div class="row">
@@ -192,11 +196,10 @@ a{color:var(--brand)}
     </div>
     <div>
       <label for="s-name">Your name (default for Names)</label>
-      <input id="s-name" placeholder="Sam">
+      <input id="s-name" placeholder="Enter your name">
     </div>
     <div>
-      <label for="s-rate">Default petrol price ₹/L</label>
-      <input type="number" id="s-rate" step="0.01" inputmode="decimal">
+
     </div>
     <p class="muted">Files are saved as: chosen folder › YYYY-MM › Expense_Claim_YYYY-MM.xlsx, with bill photos named by line number (1.jpg, 2.jpg …).</p>
   </div>
@@ -225,14 +228,21 @@ a{color:var(--brand)}
 </div>
 
 <script>
+/* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
+const BUILT_IN_CLIENT_ID = '';
+
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
 const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch{ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 };
-const cfg = Object.assign({clientId:'', myName:'', fuelRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
+const cfg = Object.assign({clientId:'', myName:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
 const saveCfg = () => LS.set('cfg', cfg);
+const isFuel = t => t === 'Fuel' || t === 'Petrol' || t === 'Diesel';
+const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
+function rateHint(){ const f = F('fuel').value, r = lastRate(f); $('#lbl-rate').textContent = f + ' rate today ₹/L'; F('rate').placeholder = r ? 'Enter today’s rate (last ₹' + r + ')' : 'Enter today’s rate'; }
+if(BUILT_IN_CLIENT_ID && !cfg.clientId) cfg.clientId = BUILT_IN_CLIENT_ID;
 const r2 = n => Math.round((+n + Number.EPSILON) * 100) / 100;
 const inr = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
@@ -342,7 +352,7 @@ async function saveExcel(key){
 function calc(e, monthEntries){
   const pax = Math.max(1, +e.pax || 1);
   const out = {amount:0, note:'', warn:[], capped:false};
-  if(e.type === 'Petrol'){
+  if(isFuel(e.type)){
     const pct = e.vehicle === 'Car' ? 10 : 4;
     out.amount = r2((+e.fuelRate || 0) * pct / 100 * (+e.km || 0));
     out.note = `${pct}% of ₹${e.fuelRate || 0}/L × ${e.km || 0} km`;
@@ -372,7 +382,7 @@ function buildXlsx(key, m){
   const H = ['Sl. No','Date','Project ID','Expense Type','Location','Vehicle Type','Current Fuel Rate','Running Km','No of Pax','Names','Claim Amount (Final)','Remarks','Bill Image'];
   const rows = [H];
   m.entries.forEach(e => {
-    const fuel = e.type === 'Petrol';
+    const fuel = isFuel(e.type);
     rows.push([e.line, dmy(e.date), e.project, e.type, e.location, fuel ? e.vehicle : '', fuel ? +e.fuelRate : '', fuel ? +e.km : '',
       +e.pax || '', e.names, e.amount, e.photo ? (e.remarks || '') : [e.remarks, 'No bill'].filter(Boolean).join(' – '), e.photo ? 'View bill' : '']);
   });
@@ -404,7 +414,7 @@ function buildXlsx(key, m){
       const s = {border, alignment:{vertical:'center', horizontal: c === 0 ? 'center' : undefined}};
       if(c === 6 || c === 10) s.numFmt = money;
       if(c === 10 && e.photo) s.fill = {fgColor:{rgb:'92D050'}};
-      if((c === 5 || c === 6 || c === 7) && e.type !== 'Petrol') s.fill = {fgColor:{rgb:'D9D9D9'}};
+      if((c === 5 || c === 6 || c === 7) && !isFuel(e.type)) s.fill = {fgColor:{rgb:'D9D9D9'}};
       cell.s = s;
     }
     if(e.photo){
@@ -450,7 +460,7 @@ $('#f-photo').onchange = async ev => {
 /* ---------- add form ---------- */
 const F = id => $('#f-' + id);
 function formEntry(){
-  return {date:F('date').value, project:F('project').value.trim(), type:F('type').value, location:F('location').value.trim(),
+  return {date:F('date').value, project:F('project').value.trim(), type:F('type').value === 'Fuel' ? F('fuel').value : F('type').value, location:F('location').value.trim(),
     scope:F('scope').value, meals:+F('meals').value || 1, vehicle:F('vehicle').value, fuelRate:+F('rate').value || 0,
     km:+F('km').value || 0, pax:+F('pax').value || 1, names:F('names').value.trim(), bill:+F('bill').value || 0,
     remarks:F('remarks').value.trim()};
@@ -458,8 +468,9 @@ function formEntry(){
 function syncTypeFields(){
   const t = F('type').value;
   $('#grp-food').hidden = t !== 'Food';
-  $('#grp-fuel').hidden = t !== 'Petrol';
-  $('#grp-bill').hidden = t === 'Petrol';
+  $('#grp-fuel').hidden = !isFuel(t);
+  $('#grp-bill').hidden = isFuel(t);
+  rateHint();
 }
 function refreshCalc(){
   const e = formEntry();
@@ -480,7 +491,7 @@ function resetForm(keepContext){
   if(!keepContext){ F('date').value = todayISO(); }
   F('bill').value = ''; F('km').value = ''; F('remarks').value = ''; F('meals').value = 1;
   F('names').value = F('names').value || cfg.myName;
-  F('rate').value = F('rate').value || cfg.fuelRate;
+  F('rate').value = '';
   F('location').value = F('location').value || cfg.lastLocation;
   photoBlob = null; $('#f-preview').hidden = true; $('#f-photo').value = '';
   $('#btn-photo').textContent = '📷 Take bill photo';
@@ -491,8 +502,9 @@ async function preloadMonth(){
   if(!key || months[key] || !account || !cfg.folderId) return;
   try{ await loadMonth(key); refreshCalc(); }catch{}
 }
-['date','type','scope','meals','vehicle','rate','km','pax','bill'].forEach(id => F(id).addEventListener('input', () => { syncTypeFields(); refreshCalc(); }));
+['date','type','scope','meals','fuel','vehicle','rate','km','pax','bill'].forEach(id => F(id).addEventListener('input', () => { syncTypeFields(); refreshCalc(); }));
 F('date').addEventListener('change', preloadMonth);
+F('fuel').addEventListener('change', () => { F('rate').value = ''; rateHint(); refreshCalc(); });
 
 let saving = false;
 $('#btn-save').onclick = async () => {
@@ -501,10 +513,10 @@ $('#btn-save').onclick = async () => {
   const missing = [];
   if(!e.date) missing.push('date');
   if(!e.project) missing.push('Project ID');
-  if(e.type === 'Petrol' && (!e.fuelRate || !e.km)) missing.push('petrol price and km');
-  if(e.type !== 'Petrol' && !e.bill) missing.push('bill amount');
+  if(isFuel(e.type) && (!e.fuelRate || !e.km)) missing.push('fuel price and km');
+  if(!isFuel(e.type) && !e.bill) missing.push('bill amount');
   if(missing.length){ status('Fill in ' + missing.join(', ') + '.'); return; }
-  if(e.type !== 'Petrol' && !photoBlob && !confirm('No bill photo attached. Save this line without a bill (e.g. a cash auto fare)?')) return;
+  if(!isFuel(e.type) && !photoBlob && !confirm('No bill photo attached. Save this line without a bill (e.g. a cash auto fare)?')) return;
 
   saving = true; $('#btn-save').disabled = true;
   try{
@@ -517,7 +529,7 @@ $('#btn-save').onclick = async () => {
     if(photoBlob){ status('Uploading bill photo ' + line + '.jpg…', true); photo = line + '.jpg'; photoUrl = (await putFile(m.folderId, photo, photoBlob, 'image/jpeg')).webUrl; }
     const remarks = e.remarks;
     const entry = {line, date:e.date, project:e.project, type:e.type, location:e.location, vehicle:e.vehicle, fuelRate:e.fuelRate,
-      km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:e.type === 'Petrol' ? null : e.bill,
+      km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:isFuel(e.type) ? null : e.bill,
       amount:c.amount, remarks, photo, photoUrl, saved:new Date().toISOString()};
     m.entries.push(entry);
     status('Saving…', true);
@@ -527,6 +539,7 @@ $('#btn-save').onclick = async () => {
     if(e.location && !cfg.locations.includes(e.location)) cfg.locations.push(e.location);
     cfg.lastLocation = e.location || cfg.lastLocation;
     if(e.type === 'Petrol') cfg.fuelRate = e.fuelRate;
+    if(e.type === 'Diesel') cfg.dieselRate = e.fuelRate;
     saveCfg(); fillLists();
     await saveExcel(key);
     status(`Saved line ${line} · ${inr(c.amount)}`);
@@ -556,7 +569,7 @@ async function renderList(){
     if(!m.entries.length){ box.innerHTML = '<p class="empty">No claim lines for this month yet. Add one from the Add tab.</p>'; return; }
     box.innerHTML = m.entries.map(e => {
       const late = Math.floor((new Date(todayISO()) - new Date(e.date)) / 864e5) > 10;
-      const detail = e.type === 'Petrol' ? `${e.vehicle}, ${e.km} km @ ₹${e.fuelRate}` : (e.names || '');
+      const detail = isFuel(e.type) ? `${e.vehicle}, ${e.km} km @ ₹${e.fuelRate}` : (e.names || '');
       return `<div class="item">
         <div class="no">${e.line}</div>
         <div><div class="what">${esc(e.type)}${late ? '<span class="tag">over 10 days</span>' : ''}</div>
@@ -611,14 +624,13 @@ $('#btn-open').onclick = async () => {
 
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
-  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName; $('#s-rate').value = cfg.fuelRate;
+  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
   $('#btn-signin').hidden = !!account; $('#btn-signout').hidden = !account;
 }
 $('#s-client').addEventListener('change', async () => { cfg.clientId = $('#s-client').value.trim(); saveCfg(); await initAuth(); renderSettings(); });
 $('#s-name').addEventListener('change', () => { cfg.myName = $('#s-name').value.trim(); saveCfg(); if(!F('names').value) F('names').value = cfg.myName; });
-$('#s-rate').addEventListener('change', () => { cfg.fuelRate = $('#s-rate').value; saveCfg(); F('rate').value = cfg.fuelRate; refreshCalc(); });
 $('#btn-signin').onclick = async () => { try{ await token(); renderSettings(); }catch(e){ status(e.message); } };
 $('#btn-signout').onclick = async () => { if(pca && account){ await pca.logoutRedirect({account}); } };
 
@@ -663,10 +675,11 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   if(b.dataset.tab === 'set') renderSettings();
 });
 
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 /* ---------- start ---------- */
 (async () => {
   fillLists();
-  F('names').value = cfg.myName; F('rate').value = cfg.fuelRate; F('location').value = cfg.lastLocation;
+  F('names').value = cfg.myName; F('location').value = cfg.lastLocation;
   $('#l-month').value = todayISO().slice(0,7);
   resetForm(false);
   try{ await initAuth(); }catch(e){ status('Sign-in problem: ' + e.message); }

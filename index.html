@@ -113,7 +113,7 @@ a{color:var(--brand)}
     <div class="row">
       <div><label for="f-scope">Travel area</label>
         <select id="f-scope"><option value="state">Kerala / nearby districts</option><option value="outside">Outside state</option></select></div>
-      <div><label for="f-meals">Meals in this bill</label><input type="number" id="f-meals" min="1" value="1" inputmode="numeric"></div>
+      <input type="hidden" id="f-meals" value="1">
     </div>
   </div>
 
@@ -310,6 +310,16 @@ async function loadMonth(key){
   const m = txt ? JSON.parse(txt) : {entries:[], advance:0};
   m.folderId = f.id;
   months[key] = m;
+  // Undo the reduction made by the earlier app version (restore full bill, remove the remark)
+  let fixed = false;
+  m.entries.forEach(e => {
+    const mt = /\s*(?:–\s*)?Capped per policy \(bill ₹([\d,.]+)\)/.exec(e.remarks || '');
+    if(!mt) return;
+    e.amount = r2(e.bill != null ? e.bill : +mt[1].replace(/,/g, ''));
+    e.remarks = e.remarks.replace(mt[0], '').trim();
+    fixed = true;
+  });
+  if(fixed){ await saveJson(key); await saveExcel(key); }
   return m;
 }
 async function saveJson(key){
@@ -346,14 +356,10 @@ function calc(e, monthEntries){
     const dayCap = outside ? 700 : 500;
     const usedPP = monthEntries.filter(x => x.type === 'Food' && x.date === e.date)
       .reduce((s, x) => s + x.amount / Math.max(1, +x.pax || 1), 0);
-    let limit = Math.max(0, dayCap - usedPP);
-    if(!outside) limit = Math.min(limit, 150 * Math.max(1, +e.meals || 1));
-    const allowed = r2(limit * pax);
+    const dayPP = r2(usedPP + bill / pax);
     out.amount = r2(bill);
-    out.note = `Policy limit for this bill: ${inr(allowed)} (`
-      + (outside ? 'max ₹700/day per person' : '₹150 per meal, max ₹500/day per person') + ')'
-      + (usedPP ? ` · ₹${r2(usedPP)}/person already claimed that day` : '');
-    if(bill > allowed) out.warn.push(`This bill is ${inr(r2(bill - allowed))} over the policy limit of ${inr(allowed)}. The full bill amount will still be claimed.`);
+    out.note = `Food limit: ₹${dayCap}/day per person · this day’s food so far incl. this bill: ₹${dayPP}/person`;
+    if(dayPP > dayCap) out.warn.push(`Food for this day is ₹${dayPP}/person, ₹${r2(dayPP - dayCap)} over the ₹${dayCap}/day limit. The full bill amount will still be claimed.`);
     return out;
   }
   out.amount = r2(bill);
@@ -368,7 +374,7 @@ function buildXlsx(key, m){
   m.entries.forEach(e => {
     const fuel = e.type === 'Petrol';
     rows.push([e.line, dmy(e.date), e.project, e.type, e.location, fuel ? e.vehicle : '', fuel ? +e.fuelRate : '', fuel ? +e.km : '',
-      +e.pax || '', e.names, e.amount, e.remarks || '', e.photo ? 'View bill' : '']);
+      +e.pax || '', e.names, e.amount, e.photo ? (e.remarks || '') : [e.remarks, 'No bill'].filter(Boolean).join(' – '), e.photo ? 'View bill' : '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const n = m.entries.length;
@@ -460,7 +466,7 @@ function refreshCalc(){
   const m = months[e.date.slice(0,7)];
   const c = calc(e, m ? m.entries : []);
   $('#calc-amt').textContent = inr(c.amount);
-  $('#calc-note').textContent = c.note + (e.type === 'Food' && !m && cfg.folderId ? ' · loading that day’s earlier meals…' : '');
+  $('#calc-note').textContent = c.note + (e.type === 'Food' && !m && cfg.folderId ? ' · loading that day’s earlier food bills…' : '');
   const age = Math.floor((new Date(todayISO()) - new Date(e.date)) / 864e5);
   if(age > 10) c.warn.push(`This expense is ${age} days old. Policy asks for claims within 10 days.`);
   $('#calc-warn').innerHTML = c.warn.map(w => `<div class="note warn">${esc(w)}</div>`).join('');
@@ -555,7 +561,7 @@ async function renderList(){
         <div class="no">${e.line}</div>
         <div><div class="what">${esc(e.type)}${late ? '<span class="tag">over 10 days</span>' : ''}</div>
           <div class="meta">${dmy(e.date)} · ${esc(e.project)}</div>
-          <div class="meta">${esc(detail)}${e.remarks ? ' · ' + esc(e.remarks) : ''}</div></div>
+          <div class="meta">${esc(detail)}${e.remarks ? ' · ' + esc(e.remarks) : ''}${e.photo ? '' : ' · No bill'}</div></div>
         <div><div class="amt ${e.photo ? 'has-bill' : ''}">${inr(e.amount)}</div>
           <div class="act"><button class="danger" data-del="${e.line}">Delete</button></div></div>
       </div>`;

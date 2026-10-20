@@ -80,6 +80,9 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .modal .foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);flex-wrap:wrap}
 .modal .foot button{flex:1}
 .muted{color:var(--muted);font-size:14px}
+.claimbar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
+.claimbar label{margin-top:0}
+.claimbar button{padding:11px 14px}
 .stack>*+*{margin-top:10px}
 a{color:var(--brand)}
 </style>
@@ -93,6 +96,7 @@ a{color:var(--brand)}
 <main>
 <!-- ADD -->
 <section id="tab-add">
+  <div class="claimbar"><div><label for="f-folder">Claim folder</label><select id="f-folder" class="claimsel"></select></div><button class="ghost newclaim" type="button">+ New</button></div>
   <div class="row">
     <div><label for="f-date">Date</label><input type="date" id="f-date"></div>
     <div><label for="f-type">Expense type</label>
@@ -158,8 +162,7 @@ a{color:var(--brand)}
 
 <!-- CLAIMS -->
 <section id="tab-list" hidden>
-  <label for="l-month">Claim month</label>
-  <input type="month" id="l-month">
+  <div class="claimbar"><div><label for="l-folder">Claim folder</label><select id="l-folder" class="claimsel"></select></div><button class="ghost newclaim" type="button">+ New</button></div>
   <div class="total">
     <div class="muted">Balance to claim</div>
     <div class="big" id="t-balance">₹0.00</div>
@@ -201,7 +204,7 @@ a{color:var(--brand)}
     <div>
 
     </div>
-    <p class="muted">Files are saved as: chosen folder › YYYY-MM › Expense_Claim_YYYY-MM.xlsx, with bill photos named by line number (1.jpg, 2.jpg …).</p>
+    <p class="muted">Choose a main folder here. On the Add tab, create one claim folder per trip or claim with “+ New”. Each claim folder gets its own Expense_Claim_&lt;folder name&gt;.xlsx and bill photos named by line number (1.jpg, 2.jpg …), whatever dates you enter.</p>
   </div>
 </section>
 </main>
@@ -315,6 +318,7 @@ const months = {};
 async function loadMonth(key){
   if(months[key]) return months[key];
   if(!cfg.folderId) throw new Error('Choose a OneDrive folder in Settings.');
+  if(!key) throw new Error('Choose or create a claim folder (tap “+ New”).');
   const f = await ensureFolder(cfg.folderId, key);
   const txt = await getText(f.id, 'claim-data.json');
   const m = txt ? JSON.parse(txt) : {entries:[], advance:0};
@@ -431,7 +435,7 @@ function buildXlsx(key, m){
   ws['!rows'] = [{hpt:30}];
   ws['!autofilter'] = {ref:`A1:M${Math.max(n+1,1)}`};
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Claim ' + key);
+  XLSX.utils.book_append_sheet(wb, ws, ('Claim ' + key).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31));
   return new Blob([XLSX.write(wb, {bookType:'xlsx', type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 
@@ -474,7 +478,7 @@ function syncTypeFields(){
 }
 function refreshCalc(){
   const e = formEntry();
-  const m = months[e.date.slice(0,7)];
+  const m = months[cfg.claimFolder];
   const c = calc(e, m ? m.entries : []);
   $('#calc-amt').textContent = inr(c.amount);
   $('#calc-note').textContent = c.note + (e.type === 'Food' && !m && cfg.folderId ? ' · loading that day’s earlier food bills…' : '');
@@ -498,7 +502,7 @@ function resetForm(keepContext){
   syncTypeFields(); refreshCalc();
 }
 async function preloadMonth(){
-  const key = F('date').value.slice(0,7);
+  const key = cfg.claimFolder;
   if(!key || months[key] || !account || !cfg.folderId) return;
   try{ await loadMonth(key); refreshCalc(); }catch{}
 }
@@ -520,7 +524,8 @@ $('#btn-save').onclick = async () => {
 
   saving = true; $('#btn-save').disabled = true;
   try{
-    const key = e.date.slice(0,7);
+    const key = cfg.claimFolder;
+    if(!key) throw new Error('Choose or create a claim folder at the top of the Add tab.');
     status('Opening ' + key + ' folder…', true);
     const m = await loadMonth(key);
     const c = calc(e, m.entries);
@@ -551,7 +556,7 @@ $('#btn-save').onclick = async () => {
 
 /* ---------- claims list ---------- */
 async function renderList(){
-  const key = $('#l-month').value;
+  const key = cfg.claimFolder;
   const box = $('#l-items');
   if(!account || !cfg.folderId){ box.innerHTML = '<p class="empty">Sign in and choose a OneDrive folder in Settings to see your claims.</p>'; return; }
   box.innerHTML = '<p class="empty">Loading…</p>';
@@ -581,10 +586,10 @@ async function renderList(){
     }).join('');
   }catch(err){ box.innerHTML = `<div class="note err">${esc(err.message)}</div>`; }
 }
-$('#l-month').addEventListener('change', renderList);
+
 $('#l-items').addEventListener('click', async ev => {
   const line = +ev.target.dataset.del; if(!line) return;
-  const key = $('#l-month').value, m = months[key], e = m.entries[line - 1];
+  const key = cfg.claimFolder, m = months[key], e = m.entries[line - 1];
   if(!confirm(`Delete line ${line} (${e.type}, ${inr(e.amount)})? Later lines and their photos will be renumbered.`)) return;
   try{
     status('Deleting…', true);
@@ -603,18 +608,18 @@ let advTimer;
 $('#l-advance').addEventListener('input', () => {
   clearTimeout(advTimer);
   advTimer = setTimeout(async () => {
-    const key = $('#l-month').value, m = months[key]; if(!m) return;
+    const key = cfg.claimFolder, m = months[key]; if(!m) return;
     m.advance = +$('#l-advance').value || 0;
     try{ await saveJson(key); await saveExcel(key); status('Advance updated'); renderList(); }catch(err){ status(err.message); }
   }, 900);
 });
 $('#btn-rebuild').onclick = async () => {
-  const key = $('#l-month').value;
+  const key = cfg.claimFolder;
   try{ status('Rebuilding Excel…', true); delete months[key]; await loadMonth(key); await saveExcel(key); status('Excel rebuilt'); renderList(); }
   catch(err){ status(err.message); }
 };
 $('#btn-open').onclick = async () => {
-  const key = $('#l-month').value;
+  const key = cfg.claimFolder;
   try{
     const m = await loadMonth(key);
     if(!m.xlsxUrl){ const it = await (await g(`/me/drive/items/${m.folderId}:/${enc('Expense_Claim_' + key + '.xlsx')}`)).json(); m.xlsxUrl = it.webUrl; }
@@ -663,15 +668,52 @@ $('#pk-pick').onclick = () => {
   const cur = pkStack[pkStack.length - 1];
   cfg.folderId = cur.id; cfg.folderPath = pkStack.map(x => x.name).join(' › '); saveCfg();
   for(const k in months) delete months[k];
-  $('#picker').style.display = 'none'; renderSettings(); status('Folder set: ' + cfg.folderPath); preloadMonth();
+  $('#picker').style.display = 'none'; renderSettings(); status('Folder set: ' + cfg.folderPath); cfg.claimFolder = ''; saveCfg(); loadClaimFolders();
 };
+
+/* ---------- claim folders (one per trip / claim) ---------- */
+async function loadClaimFolders(){
+  const sels = document.querySelectorAll('.claimsel');
+  if(!account || !cfg.folderId){ sels.forEach(x => x.innerHTML = '<option value="">Sign in and choose a main folder first</option>'); return; }
+  try{
+    const j = await (await g(`/me/drive/items/${cfg.folderId}/children?$select=id,name,folder,createdDateTime&$top=200`)).json();
+    const names = j.value.filter(x => x.folder).sort((a, b) => b.createdDateTime.localeCompare(a.createdDateTime)).map(x => x.name);
+    if(cfg.claimFolder && !names.includes(cfg.claimFolder)) cfg.claimFolder = '';
+    if(!cfg.claimFolder && names.length) cfg.claimFolder = names[0];
+    saveCfg();
+    const html = names.length ? names.map(n => `<option${n === cfg.claimFolder ? ' selected' : ''}>${esc(n)}</option>`).join('')
+                              : '<option value="">No claim folders yet – tap “+ New”</option>';
+    sels.forEach(x => x.innerHTML = html);
+  }catch(e){ status(e.message); }
+}
+document.querySelectorAll('.claimsel').forEach(sel => sel.addEventListener('change', () => {
+  cfg.claimFolder = sel.value; saveCfg();
+  document.querySelectorAll('.claimsel').forEach(x => x.value = cfg.claimFolder);
+  preloadMonth(); refreshCalc();
+  if(!$('#tab-list').hidden) renderList();
+}));
+document.querySelectorAll('.newclaim').forEach(btn => btn.addEventListener('click', async () => {
+  if(!account || !cfg.folderId){ status('Sign in and choose a main folder in Settings first.'); return; }
+  let name = prompt('Name for the new claim folder (e.g. trip or date range)', 'Claim ' + dmy(todayISO()));
+  if(!name) return;
+  name = name.replace(/[\\/:*?"<>|#%]/g, '-').trim();
+  if(!name) return;
+  try{
+    status('Creating folder…', true);
+    await ensureFolder(cfg.folderId, name);
+    cfg.claimFolder = name; saveCfg();
+    await loadClaimFolders(); preloadMonth(); refreshCalc();
+    if(!$('#tab-list').hidden) renderList();
+    status('Claim folder ready: ' + name);
+  }catch(e){ status(e.message); }
+}));
 
 /* ---------- tabs ---------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.removeAttribute('aria-current'));
   b.setAttribute('aria-current', 'page');
   ['add','list','set'].forEach(t => $('#tab-' + t).hidden = t !== b.dataset.tab);
-  if(b.dataset.tab === 'list') renderList();
+  if(b.dataset.tab === 'list'){ loadClaimFolders().then(renderList); }
   if(b.dataset.tab === 'set') renderSettings();
 });
 
@@ -680,13 +722,12 @@ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch
 (async () => {
   fillLists();
   F('names').value = cfg.myName; F('location').value = cfg.lastLocation;
-  $('#l-month').value = todayISO().slice(0,7);
   resetForm(false);
   try{ await initAuth(); }catch(e){ status('Sign-in problem: ' + e.message); }
   renderSettings();
   if(!cfg.clientId || !account || !cfg.folderId){
     document.querySelector('nav button[data-tab="set"]').click();
-  } else preloadMonth();
+  } else { await loadClaimFolders(); preloadMonth(); }
 })();
 </script>
 </body>

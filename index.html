@@ -348,12 +348,12 @@ function calc(e, monthEntries){
       .reduce((s, x) => s + x.amount / Math.max(1, +x.pax || 1), 0);
     let limit = Math.max(0, dayCap - usedPP);
     if(!outside) limit = Math.min(limit, 150 * Math.max(1, +e.meals || 1));
-    let perHead = bill / pax;
-    if(perHead > limit){ perHead = limit; out.capped = true; }
-    out.amount = r2(perHead * pax);
-    out.note = (outside ? 'Actuals, max ₹700/day per person' : '₹150 per meal, max ₹500/day per person')
+    const allowed = r2(limit * pax);
+    out.amount = r2(bill);
+    out.note = `Policy limit for this bill: ${inr(allowed)} (`
+      + (outside ? 'max ₹700/day per person' : '₹150 per meal, max ₹500/day per person') + ')'
       + (usedPP ? ` · ₹${r2(usedPP)}/person already claimed that day` : '');
-    if(out.capped) out.warn.push(`Bill is above the policy limit, so the claim is reduced from ${inr(bill)} to ${inr(out.amount)}.`);
+    if(bill > allowed) out.warn.push(`This bill is ${inr(r2(bill - allowed))} over the policy limit of ${inr(allowed)}. The full bill amount will still be claimed.`);
     return out;
   }
   out.amount = r2(bill);
@@ -363,12 +363,12 @@ function calc(e, monthEntries){
 
 /* ---------- Excel builder (layout matches your sheet) ---------- */
 function buildXlsx(key, m){
-  const H = ['Sl. No','Date','Project ID','Expense Type','Location','Vehicle Type','Current Fuel Rate','Running Km','No of Pax','Names','Claim Amount (Final)','Remarks'];
+  const H = ['Sl. No','Date','Project ID','Expense Type','Location','Vehicle Type','Current Fuel Rate','Running Km','No of Pax','Names','Claim Amount (Final)','Remarks','Bill Image'];
   const rows = [H];
   m.entries.forEach(e => {
     const fuel = e.type === 'Petrol';
     rows.push([e.line, dmy(e.date), e.project, e.type, e.location, fuel ? e.vehicle : '', fuel ? +e.fuelRate : '', fuel ? +e.km : '',
-      +e.pax || '', e.names, e.amount, e.remarks || '']);
+      +e.pax || '', e.names, e.amount, e.remarks || '', e.photo ? 'View bill' : '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const n = m.entries.length;
@@ -386,14 +386,14 @@ function buildXlsx(key, m){
   ws[A(tr+1,10)]= {t:'n', v:adv};
   ws[A(tr+2,9)] = {t:'s', v:'Balance'};
   ws[A(tr+2,10)]= {t:'n', v:r2(total-adv), f:`K${tr+1}-K${tr+2}`};
-  ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:tr+2, c:11}});
+  ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:tr+2, c:12}});
 
-  for(let c = 0; c < 12; c++){
+  for(let c = 0; c < 13; c++){
     ws[A(0,c)].s = {font:{bold:true}, fill:{fgColor:{rgb:'DDEBF7'}}, border, alignment:{horizontal:'center', vertical:'center', wrapText:true}};
   }
   m.entries.forEach((e, i) => {
     const r = i + 1;
-    for(let c = 0; c < 12; c++){
+    for(let c = 0; c < 13; c++){
       const cell = ws[A(r,c)] || (ws[A(r,c)] = {t:'s', v:''});
       const s = {border, alignment:{vertical:'center', horizontal: c === 0 ? 'center' : undefined}};
       if(c === 6 || c === 10) s.numFmt = money;
@@ -401,15 +401,19 @@ function buildXlsx(key, m){
       if((c === 5 || c === 6 || c === 7) && e.type !== 'Petrol') s.fill = {fgColor:{rgb:'D9D9D9'}};
       cell.s = s;
     }
-    if(e.photo) ws[A(r,0)].l = {Target:e.photo, Tooltip:'Open bill photo'};
+    if(e.photo){
+      const lc = ws[A(r,12)];
+      lc.l = {Target:e.photoUrl || e.photo, Tooltip:'Open bill photo ' + e.photo};
+      lc.s = {border, font:{color:{rgb:'0563C1'}, underline:true}, alignment:{horizontal:'center', vertical:'center'}};
+    }
   });
   for(let k = 0; k < 3; k++){
     ws[A(tr+k,9)].s  = {font:{bold:true, sz:12}, alignment:{horizontal:'right'}, border};
     ws[A(tr+k,10)].s = {font:{bold:true, sz:12}, numFmt:rupee, border};
   }
-  ws['!cols'] = [6,11,34,13,10,9,10,9,7,18,14,36].map(w => ({wch:w}));
+  ws['!cols'] = [6,11,34,13,10,9,10,9,7,18,14,36,11].map(w => ({wch:w}));
   ws['!rows'] = [{hpt:30}];
-  ws['!autofilter'] = {ref:`A1:L${Math.max(n+1,1)}`};
+  ws['!autofilter'] = {ref:`A1:M${Math.max(n+1,1)}`};
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Claim ' + key);
   return new Blob([XLSX.write(wb, {bookType:'xlsx', type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
@@ -503,12 +507,12 @@ $('#btn-save').onclick = async () => {
     const m = await loadMonth(key);
     const c = calc(e, m.entries);
     const line = m.entries.length + 1;
-    let photo = '';
-    if(photoBlob){ status('Uploading bill photo ' + line + '.jpg…', true); photo = line + '.jpg'; await putFile(m.folderId, photo, photoBlob, 'image/jpeg'); }
-    const remarks = [e.remarks, c.capped ? `Capped per policy (bill ${inr(e.bill)})` : ''].filter(Boolean).join(' – ');
+    let photo = '', photoUrl = '';
+    if(photoBlob){ status('Uploading bill photo ' + line + '.jpg…', true); photo = line + '.jpg'; photoUrl = (await putFile(m.folderId, photo, photoBlob, 'image/jpeg')).webUrl; }
+    const remarks = e.remarks;
     const entry = {line, date:e.date, project:e.project, type:e.type, location:e.location, vehicle:e.vehicle, fuelRate:e.fuelRate,
       km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:e.type === 'Petrol' ? null : e.bill,
-      amount:c.amount, remarks, photo, saved:new Date().toISOString()};
+      amount:c.amount, remarks, photo, photoUrl, saved:new Date().toISOString()};
     m.entries.push(entry);
     status('Saving…', true);
     try{ await saveJson(key); }catch(err){ m.entries.pop(); throw err; }
@@ -569,7 +573,7 @@ $('#l-items').addEventListener('click', async ev => {
     m.entries.splice(line - 1, 1);
     for(let i = line - 1; i < m.entries.length; i++){
       const x = m.entries[i], nl = i + 1;
-      if(x.photo && x.photo !== nl + '.jpg'){ await renameFile(m.folderId, x.photo, nl + '.jpg'); x.photo = nl + '.jpg'; }
+      if(x.photo && x.photo !== nl + '.jpg'){ const it = await (await renameFile(m.folderId, x.photo, nl + '.jpg')).json(); x.photo = nl + '.jpg'; x.photoUrl = it.webUrl; }
       x.line = nl;
     }
     await saveJson(key); await saveExcel(key);

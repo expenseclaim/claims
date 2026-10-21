@@ -186,6 +186,7 @@ a{color:var(--brand)}
     </div>
   </div>
   <div id="ocr-note" aria-live="polite"></div>
+  <details id="ocr-raw" hidden style="margin-top:6px;font-size:13px"><summary class="muted">Show text read from the bill</summary><pre id="ocr-text" style="white-space:pre-wrap;font-size:12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px;max-height:220px;overflow:auto"></pre></details>
 
   <div class="amount" aria-live="polite">
     <small>Claim amount (final)</small>
@@ -709,7 +710,7 @@ function setPhoto(blob, note){
   $('#scan-note').textContent = note || '';
   $('#btn-original').hidden = !photoRaw || blob === photoRaw;
   $('#btn-photo').textContent = '📷 Retake';
-  readBill(blob);
+  readBill(photoRaw || blob);
 }
 $('#btn-adjust').onclick = async () => {
   if(!photoRaw) return;
@@ -726,11 +727,12 @@ const onPicked = async ev => {
     status(cfg.prepDone ? 'Cropping the bill…' : 'Cropping the bill… (first time takes longer)', true);
     let blob = raw, note;
     try{
+      if(f.type === 'image/png') throw {screenshot: true};
       const r = await autoScan(raw);
       blob = r.blob;
       note = r.auto ? '✓ Bill cropped to the paper and straightened automatically.'
                     : 'Couldn’t find the bill edges, so the full photo is kept. Tap “Adjust edges” to crop it.';
-    }catch(e){ note = 'Scanner not available right now, so the original photo is kept.'; }
+    }catch(e){ note = e && e.screenshot ? 'Screenshot kept as it is (not cropped).' : 'Scanner not available right now, so the original photo is kept.'; }
     status('');
     setPhoto(blob, note);
   }catch(e){ status('Could not read that photo. Try again.'); }
@@ -768,40 +770,33 @@ function parseBillDate(text){
 function parseBillAmount(text){
   const noDates = t => t.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ').replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ');
   const fixLine = l => noDates(l)
-    .replace(/(\d)\s*[,.]\s*(\d{2})(?![\d,])/g, '$1.$2')   // "421,00" / "421 . 00" → 421.00 (comma misread as decimal point)
-    .replace(/(\d)\s+00\b/g, '$1.00')                      // "421 00" → 421.00 (dot not seen)
+    .replace(/(?:\b(?:rs|r5|re|inr)|[₹€])\s*[.:\-\/=]*\s*(?=\d)/gi, ' ₹ ')   // Rs. / RS. / Rs: / INR / ₹ → ₹
+    .replace(/(^|\s)[%z]\s*(?=\d)/g, '$1₹ ')                                 // ₹ often misread as % or z
+    .replace(/(\d)\s*[,.]\s*(\d{2})(?![\d,])/g, '$1.$2')                    // 421,00 → 421.00
+    .replace(/(\d)\s+00\b/g, '$1.00')                                       // 421 00 → 421.00
     .replace(/(\d)\s*,\s*(\d{3})/g, '$1,$2');
   const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-  // Does this bill write amounts with paise (e.g. 120.00)? If so, a long whole number ending in 00
-  // with no point (e.g. 42100) is almost certainly 421.00 with the dot missed.
   const decimalBill = lines.some(l => /\d\.\d{2}(?!\d)/.test(fixLine(l)));
-  const nums = l => (fixLine(l).match(/\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g) || [])
-    .map(n => { let v = +n.replace(/,/g, ''); if(decimalBill && !/[.,]/.test(n) && n.length >= 4 && n.endsWith('00')) v = v / 100; return v; })
-    .filter(n => n > 0 && n < 200000);
-  const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due|received)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*[₹%]/i;
-  const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b/i;
-  const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|no)|items?\s*:|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due/i;
-  const pick = re => {
-    const vals = [];
-    lines.forEach((l, i) => {
-      if(!re.test(l) || skip.test(l)) return;
-      let v = nums(l);
-      if(!v.length && lines[i+1]) v = nums(lines[i+1]);
-      if(v.length) vals.push(v[v.length - 1]);
-    });
-    return vals.length ? Math.max(...vals) : null;
-  };
-  let v = pick(strong) ?? pick(weak);
-  if(v == null){
-    const cur = [];
-    lines.forEach(l => { if(/₹|\brs\.?\b|\binr\b/i.test(l) && !skip.test(l)) cur.push(...nums(l)); });
-    if(cur.length) v = Math.max(...cur);
-  }
-  if(v == null){
-    const dec = [];
-    lines.forEach(l => { if(!skip.test(l)) (fixLine(l).match(/\b\d{1,6}\.\d{2}\b/g) || []).forEach(n => dec.push(+n)); });
-    if(dec.length) v = Math.max(...dec);
-  }
+  const NUM = /\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g;
+  const val = n => { let v = +n.replace(/,/g, ''); if(decimalBill && !/[.,]/.test(n) && n.length >= 4 && n.endsWith('00')) v /= 100; return v; };
+  const ok = v => v > 0 && v < 200000;
+  const nums = l => (fixLine(l).match(NUM) || []).map(val).filter(ok);
+  const afterRs = l => { const out = [], re = /₹\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g; let m; const t = fixLine(l); while((m = re.exec(t))) out.push(val(m[1])); return out.filter(ok); };
+  const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*₹/i;
+  const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b|\bpaid\b|\bpayment\b/i;
+  const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|no)|items?\s*:|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|txn|transaction\s*id|ref(erence)?\s*no|upi\s*id|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due|cash\s*paid|balance/i;
+  const best = arr => arr.length ? Math.max(...arr) : null;
+  // amount written after a keyword: same line, or on the next line
+  const afterKey = re => best(lines.flatMap((l, i) => {
+    if(!re.test(l) || skip.test(l)) return [];
+    let v = afterRs(l); if(!v.length) v = nums(l);
+    if(!v.length && lines[i+1]){ v = afterRs(lines[i+1]); if(!v.length) v = nums(lines[i+1]); }
+    return v.length ? [v[v.length - 1]] : [];
+  }));
+  // 1) Total / Grand total / Net amount …  2) Amount / Amt / Fare / Paid …
+  // 3) any amount written after Rs. / RS. / ₹ (screenshots, UPI payments)  4) largest amount with paise
+  let v = afterKey(strong) ?? afterKey(weak) ?? best(lines.filter(l => !skip.test(l)).flatMap(afterRs));
+  if(v == null) v = best(lines.filter(l => !skip.test(l)).flatMap(l => (fixLine(l).match(/\b\d{1,6}\.\d{2}\b/g) || []).map(Number).filter(ok)));
   return v == null ? null : Math.round(v * 100) / 100;
 }
 
@@ -820,7 +815,7 @@ function loadTesseract(){
     document.head.appendChild(sc);
   });
 }
-function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; }
+function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; $('#ocr-raw').hidden = true; }
 async function ocrImage(blob){
   // enlarge small bills and use greyscale with extra contrast, so decimal points are not lost
   const bmp = await createImageBitmap(blob);
@@ -828,7 +823,8 @@ async function ocrImage(blob){
   const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
   const x = c.getContext('2d'); x.filter = 'grayscale(1) contrast(1.4)'; x.imageSmoothingQuality = 'high';
   x.drawImage(bmp, 0, 0, c.width, c.height); bmp.close && bmp.close();
-  return c;
+  return { canvas: c, inverted(){ const c2 = document.createElement('canvas'); c2.width = c.width; c2.height = c.height;
+    const y = c2.getContext('2d'); y.filter = 'invert(1)'; y.drawImage(c, 0, 0); return c2; } };
 }
 async function readBill(blob){
   const run = ++ocrRun;
@@ -838,16 +834,24 @@ async function readBill(blob){
   note.textContent = 'Reading the bill… (first time takes longer). You can keep filling the form.';
   try{
     const worker = await getOcrWorker();
-    const { data } = await worker.recognize(await ocrImage(blob));
+    const img = await ocrImage(blob);
+    let text = (await worker.recognize(img.canvas)).data.text;
     if(run !== ocrRun) return;                       // a newer photo was taken
-    const d = parseBillDate(data.text);
-    const a = isFuel(F('type').value) ? null : parseBillAmount(data.text);
+    let d = parseBillDate(text), a = parseBillAmount(text);
+    if(d == null || a == null){                      // try again with colours flipped (white text on dark/coloured screens)
+      const t2 = (await worker.recognize(img.inverted())).data.text;
+      if(run !== ocrRun) return;
+      text += '\n' + t2;
+      d = d ?? parseBillDate(t2); a = a ?? parseBillAmount(t2);
+    }
+    if(isFuel(F('type').value)) a = null;
+    $('#ocr-text').textContent = text; $('#ocr-raw').hidden = false;
     const got = [];
     if(d && F('date').value === startDate){ F('date').value = d; F('date').classList.add('ocr'); got.push('date ' + dmy(d)); }
     if(a != null && !F('bill').value && !startBill){ F('bill').value = a.toFixed(2); F('bill').classList.add('ocr'); got.push('amount ' + inr(a)); }
     note.textContent = got.length
       ? 'Read from bill: ' + got.join(', ') + '. Please check before saving.'
-      : 'Could not read the date or amount from this bill. Please enter them yourself.';
+      : 'Could not read the date or amount from this image. Please enter them yourself.';
     refreshCalc(); preloadMonth();
   }catch(e){ if(run === ocrRun) note.textContent = e.message; }
 }

@@ -767,6 +767,12 @@ function parseBillDate(text){
   found.sort((a, b) => a.idx - b.idx);
   return found.length ? found[0].iso : null;
 }
+function allBillDates(text){
+  const out = []; let t = text;
+  for(let i = 0; i < 6; i++){ const d = parseBillDate(t); if(!d) break; out.push(d); const [y, m, dd] = d.split('-');
+    t = t.split('\n').filter(l => parseBillDate(l) !== d).join('\n'); }
+  return out;
+}
 function parseBillAmount(text){
   const noDates = t => t.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ').replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ');
   const fixLine = l => noDates(l)
@@ -784,18 +790,29 @@ function parseBillAmount(text){
   const afterRs = l => { const out = [], re = /₹\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g; let m; const t = fixLine(l); while((m = re.exec(t))) out.push(val(m[1])); return out.filter(ok); };
   const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*₹/i;
   const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b|\bpaid\b|\bpayment\b/i;
-  const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|no)|items?\s*:|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|txn|transaction\s*id|ref(erence)?\s*no|upi\s*id|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due|cash\s*paid|balance/i;
+  const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|itms|no)|\bqty\s*:|items?\s*:|fssai|k\.?\s?o\.?\s?t|table\s*no|pax|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|txn|transaction\s*id|ref(erence)?\s*no|upi\s*id|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due|cash\s*paid|balance/i;
   const best = arr => arr.length ? Math.max(...arr) : null;
   // amount written after a keyword: same line, or on the next line
+  // all other amounts on the bill (items, sub total …) – used to spot a ₹ sign misread as 7 or 2
+  const others = lines.filter(l => !skip.test(l)).flatMap(l => (fixLine(l).match(/\d+\.\d{2}(?!\d)/g) || []).map(Number)).filter(ok);
+  const fixRupee = (v, raw) => {
+    const M = others.filter(x => x !== v).reduce((m, x) => Math.max(m, x), 0);
+    if(M && /^[72]\d{2,}/.test(raw) && v >= 3 * M){ const w = val(raw.slice(1)); if(w >= 0.9 * M && w <= 1.6 * M) return w; }
+    return v;
+  };
+  const lastNum = l => { const t = fixLine(l); const r = [...t.matchAll(/₹\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g)].map(m => m[1]);
+    const raws = r.length ? r : (t.match(NUM) || []);
+    for(let k = raws.length - 1; k >= 0; k--){ const v = fixRupee(val(raws[k]), raws[k]); if(ok(v)) return v; } return null; };
   const afterKey = re => best(lines.flatMap((l, i) => {
     if(!re.test(l) || skip.test(l)) return [];
-    let v = afterRs(l); if(!v.length) v = nums(l);
-    if(!v.length && lines[i+1]){ v = afterRs(lines[i+1]); if(!v.length) v = nums(lines[i+1]); }
-    return v.length ? [v[v.length - 1]] : [];
+    let v = lastNum(l);
+    if(v == null && lines[i+1] && !skip.test(lines[i+1])) v = lastNum(lines[i+1]);
+    return v == null ? [] : [v];
   }));
-  // 1) Total / Grand total / Net amount …  2) Amount / Amt / Fare / Paid …
-  // 3) any amount written after Rs. / RS. / ₹ (screenshots, UPI payments)  4) largest amount with paise
-  let v = afterKey(strong) ?? afterKey(weak) ?? best(lines.filter(l => !skip.test(l)).flatMap(afterRs));
+  // 1) the largest Total / Grand total / Amount payable / Amount / Amt / Fare … line
+  // 2) any amount written after Rs. / RS. / ₹ (screenshots, tickets, UPI)  3) largest amount with paise
+  const kv = [afterKey(strong), afterKey(weak)].filter(x => x != null);
+  let v = kv.length ? Math.max(...kv) : best(lines.filter(l => !skip.test(l)).flatMap(afterRs));
   if(v == null) v = best(lines.filter(l => !skip.test(l)).flatMap(l => (fixLine(l).match(/\b\d{1,6}\.\d{2}\b/g) || []).map(Number).filter(ok)));
   return v == null ? null : Math.round(v * 100) / 100;
 }
@@ -821,10 +838,51 @@ async function ocrImage(blob){
   const bmp = await createImageBitmap(blob);
   const k = Math.min(2.5, Math.max(1, 2200 / Math.max(bmp.width, bmp.height)));
   const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-  const x = c.getContext('2d'); x.filter = 'grayscale(1) contrast(1.4)'; x.imageSmoothingQuality = 'high';
+  const x = c.getContext('2d'); x.filter = 'grayscale(1)'; x.imageSmoothingQuality = 'high';
   x.drawImage(bmp, 0, 0, c.width, c.height); bmp.close && bmp.close();
   return { canvas: c, inverted(){ const c2 = document.createElement('canvas'); c2.width = c.width; c2.height = c.height;
     const y = c2.getContext('2d'); y.filter = 'invert(1)'; y.drawImage(c, 0, 0); return c2; } };
+}
+async function boxTexts(blob, rec){
+  // finds solid coloured/dark boxes with text in them (e-tickets, app screens) and reads each box on its own
+  try{ await loadCV(); }catch(e){ return ''; }
+  const bmp = await createImageBitmap(blob); const W = bmp.width, H = bmp.height;
+  const full = document.createElement('canvas'); full.width = W; full.height = H;
+  const fx = full.getContext('2d'); fx.filter = 'grayscale(1)'; fx.drawImage(bmp, 0, 0); bmp.close && bmp.close();
+  const s = Math.min(1, 1000 / Math.max(W, H));
+  const small = document.createElement('canvas'); small.width = Math.round(W * s); small.height = Math.round(H * s);
+  small.getContext('2d').drawImage(full, 0, 0, small.width, small.height);
+  const src = cv.imread(small), g = new cv.Mat(), d = new cv.Mat();
+  cv.cvtColor(src, g, cv.COLOR_RGBA2GRAY); src.delete();
+  cv.threshold(g, d, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU); g.delete();
+  const k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9)); cv.morphologyEx(d, d, cv.MORPH_CLOSE, k); k.delete();
+  const cs = new cv.MatVector(), hi = new cv.Mat(); cv.findContours(d, cs, hi, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE); d.delete(); hi.delete();
+  const boxes = [];
+  for(let i = 0; i < cs.size(); i++){
+    const c = cs.get(i), r = cv.boundingRect(c), a = cv.contourArea(c); c.delete();
+    if(r.height < small.height * 0.02 || r.height > small.height * 0.15 || r.width < r.height * 1.2 || a < 0.75 * r.width * r.height) continue;
+    boxes.push({x: r.x / s, y: r.y / s, w: r.width / s, h: r.height / s});
+  }
+  cs.delete();
+  boxes.sort((p, q) => p.y - q.y || p.x - q.x);
+  const out = [];
+  for(const b of boxes.slice(0, 12)){
+    const mx = b.w * 0.04, my = b.h * 0.12, cw = Math.max(8, Math.round(b.w - 2 * mx)), ch = Math.max(8, Math.round(b.h - 2 * my)), pad = 15;
+    const t = document.createElement('canvas'); t.width = cw; t.height = ch;
+    const tx = t.getContext('2d'); tx.drawImage(full, b.x + mx, b.y + my, cw, ch, 0, 0, cw, ch);
+    const id = tx.getImageData(0, 0, cw, ch), px = id.data; let sum = 0;
+    for(let j = 0; j < px.length; j += 4) sum += px[j];
+    const invert = sum / (px.length / 4) < 128;
+    let edge = 0, ne = 0;
+    for(let j = 0; j < px.length; j += 4){ if(invert){ px[j] = px[j+1] = px[j+2] = 255 - px[j]; } }
+    for(let xx = 0; xx < cw; xx++){ edge += px[xx * 4] + px[((ch - 1) * cw + xx) * 4]; ne += 2; }
+    tx.putImageData(id, 0, 0);
+    const c = document.createElement('canvas'); c.width = cw + 2 * pad; c.height = ch + 2 * pad;
+    const cx = c.getContext('2d'); const e = Math.round(edge / ne); cx.fillStyle = `rgb(${e},${e},${e})`; cx.fillRect(0, 0, c.width, c.height);
+    cx.drawImage(t, pad, pad);
+    out.push((await rec(c, '7')).trim());
+  }
+  return out.join('\n');
 }
 async function readBill(blob){
   const run = ++ocrRun;
@@ -835,15 +893,23 @@ async function readBill(blob){
   try{
     const worker = await getOcrWorker();
     const img = await ocrImage(blob);
-    let text = (await worker.recognize(img.canvas)).data.text;
-    if(run !== ocrRun) return;                       // a newer photo was taken
-    let d = parseBillDate(text), a = parseBillAmount(text);
-    if(d == null || a == null){                      // try again with colours flipped (white text on dark/coloured screens)
-      const t2 = (await worker.recognize(img.inverted())).data.text;
-      if(run !== ocrRun) return;
-      text += '\n' + t2;
-      d = d ?? parseBillDate(t2); a = a ?? parseBillAmount(t2);
+    const rec = async (canvas, psm) => { await worker.setParameters({ tessedit_pageseg_mode: psm }); return (await worker.recognize(canvas)).data.text; };
+    // pass 1: normal page reading, pass 2: scattered-text reading (catches totals the first pass skips)
+    const A = await rec(img.canvas, '3'); if(run !== ocrRun) return;
+    note.textContent = 'Reading the bill… (second check)';
+    const B = await rec(img.canvas, '11'); if(run !== ocrRun) return;
+    let text = A + '\n' + B, dates = [...allBillDates(B), ...allBillDates(A)], a = parseBillAmount(text);
+    if(a == null || !dates.length){                  // pass 3: text inside coloured boxes (tickets, app screenshots)
+      note.textContent = 'Reading the bill… (checking boxes)';
+      const C = await boxTexts(blob, rec); if(run !== ocrRun) return;
+      text += '\n' + C; dates.push(...allBillDates(C)); a = a ?? parseBillAmount(text);
     }
+    if(a == null || !dates.length){                  // pass 4: colours flipped (white text on dark screens)
+      const D = await rec(img.inverted(), '3'); if(run !== ocrRun) return;
+      text += '\n' + D; dates.push(...allBillDates(D)); a = a ?? parseBillAmount(text);
+    }
+    const votes = {}; dates.forEach(x => votes[x] = (votes[x] || 0) + 1);
+    let d = dates.length ? dates.slice().sort((x, y) => votes[y] - votes[x])[0] : null;
     if(isFuel(F('type').value)) a = null;
     $('#ocr-text').textContent = text; $('#ocr-raw').hidden = false;
     const got = [];

@@ -80,6 +80,8 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .modal .foot{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line);flex-wrap:wrap}
 .modal .foot button{flex:1}
 .muted{color:var(--muted);font-size:14px}
+input.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--bill) 35%,transparent)}
+#ocr-note{font-size:14px;margin-top:8px;color:var(--muted)}
 .claimbar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
 .claimbar label{margin-top:0}
 .claimbar button{padding:11px 14px}
@@ -149,6 +151,7 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-photo" type="button">📷 Take bill photo</button>
     <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
   </div>
+  <div id="ocr-note" aria-live="polite"></div>
 
   <div class="amount" aria-live="polite">
     <small>Claim amount (final)</small>
@@ -352,6 +355,21 @@ async function saveExcel(key){
   }
 }
 
+/* ---------- keep lines sorted by bill date; Sl. No and photo names follow ---------- */
+async function renumber(m, key){
+  const order = new Map(m.entries.map((e, i) => [e, i]));
+  m.entries.sort((a, b) => a.date !== b.date ? a.date.localeCompare(b.date) : order.get(a) - order.get(b));
+  const moves = [];
+  m.entries.forEach((e, i) => { e.line = i + 1; if(e.photo && e.photo !== e.line + '.jpg') moves.push(e); });
+  if(!moves.length) return;
+  status('Renumbering bill photos…', true);
+  const stamp = Date.now();
+  // two steps so that e.g. 1.jpg and 2.jpg can swap names without clashing
+  for(const e of moves){ const tmp = `tmp-${stamp}-${e.line}.jpg`; await renameFile(m.folderId, e.photo, tmp); e.photo = tmp; }
+  await saveJson(key);
+  for(const e of moves){ const fin = e.line + '.jpg'; const it = await (await renameFile(m.folderId, e.photo, fin)).json(); e.photo = fin; e.photoUrl = it.webUrl; }
+}
+
 /* ---------- reimbursement policy ---------- */
 function calc(e, monthEntries){
   const pax = Math.max(1, +e.pax || 1);
@@ -458,8 +476,105 @@ $('#f-photo').onchange = async ev => {
     const p = $('#f-preview'); p.src = URL.createObjectURL(photoBlob); p.hidden = false;
     $('#btn-photo').textContent = '📷 Retake photo';
     status('');
+    readBill(photoBlob);
   }catch(e){ status('Could not read that photo. Try again.'); }
 };
+
+/* ---------- read date & amount from bill text ---------- */
+const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
+function parseBillDate(text){
+  const t = text.replace(/[Oo](?=\d)|(?<=\d)[Oo]/g, '0');
+  const today = new Date(); const found = [];
+  const push = (d, m, y, idx) => {
+    y = +y; if(y < 100) y += 2000; d = +d; m = +m;
+    if(m < 1 || m > 12 || d < 1 || d > 31 || y < 2020) return;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if(dt.getUTCDate() !== d) return;
+    const age = (today - dt) / 864e5;
+    if(age < -2 || age > 400) return;
+    found.push({iso: dt.toISOString().slice(0,10), idx});
+  };
+  let r;
+  const reYMD = /\b(20\d{2})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/g;
+  while((r = reYMD.exec(t))) push(r[3], r[2], r[1], r.index);
+  const reDMY = /\b(\d{1,2})\s*[\/\-.]\s*(\d{1,2})\s*[\/\-.]\s*(\d{4}|\d{2})(?!\d)/g;
+  while((r = reDMY.exec(t))) push(r[1], r[2], r[3], r.index);
+  const reDMonY = /\b(\d{1,2})(?:st|nd|rd|th)?[\s\-\/.,]*(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*[\s\-\/.,']*(\d{4}|\d{2})(?!\d)/gi;
+  while((r = reDMonY.exec(t))) push(r[1], MONTHS[r[2].toLowerCase()], r[3], r.index);
+  const reMonDY = /\b(jan|feb|mar|apr|may|jun|jul|aug|sept?|oct|nov|dec)[a-z]*[\s\-\/.]*(\d{1,2})(?:st|nd|rd|th)?[\s,\-\/.']*(\d{4})(?!\d)/gi;
+  while((r = reMonDY.exec(t))) push(r[2], MONTHS[r[1].toLowerCase()], r[3], r.index);
+  found.sort((a, b) => a.idx - b.idx);
+  return found.length ? found[0].iso : null;
+}
+function parseBillAmount(text){
+  const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
+  const nums = l => {
+    const clean = l.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ')      // dates
+                   .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')                     // times
+                   .replace(/(\d)\s*,\s*(\d{2,3})/g, '$1,$2').replace(/(\d)\s+\.\s*(\d{2})\b/g, '$1.$2');
+    return (clean.match(/\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g) || [])
+      .map(n => +n.replace(/,/g, '')).filter(n => n > 0 && n < 200000);
+  };
+  const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due|received)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*[₹%]/i;
+  const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b/i;
+  const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|no)|items?\s*:|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due/i;
+  const pick = re => {
+    const vals = [];
+    lines.forEach((l, i) => {
+      if(!re.test(l) || skip.test(l)) return;
+      let v = nums(l);
+      if(!v.length && lines[i+1]) v = nums(lines[i+1]);
+      if(v.length) vals.push(v[v.length - 1]);
+    });
+    return vals.length ? Math.max(...vals) : null;
+  };
+  let v = pick(strong) ?? pick(weak);
+  if(v == null){
+    const cur = [];
+    lines.forEach(l => { if(/₹|\brs\.?\b|\binr\b/i.test(l) && !skip.test(l)) cur.push(...nums(l)); });
+    if(cur.length) v = Math.max(...cur);
+  }
+  if(v == null){
+    const dec = [];
+    lines.forEach(l => { if(!skip.test(l)) (l.match(/\b\d{1,6}\.\d{2}\b/g) || []).forEach(n => dec.push(+n)); });
+    if(dec.length) v = Math.max(...dec);
+  }
+  return v == null ? null : Math.round(v * 100) / 100;
+}
+
+let ocrWorker = null, ocrRun = 0;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  return new Promise((ok, fail) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+    sc.onload = ok; sc.onerror = () => fail(new Error('Could not load the bill reader (check internet).'));
+    document.head.appendChild(sc);
+  });
+}
+function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; }
+async function readBill(blob){
+  const run = ++ocrRun;
+  const startDate = F('date').value, startBill = F('bill').value;
+  clearOcrMarks();
+  const note = $('#ocr-note');
+  note.textContent = 'Reading the bill… (first time takes longer). You can keep filling the form.';
+  try{
+    await loadTesseract();
+    if(!ocrWorker) ocrWorker = await Tesseract.createWorker('eng');
+    const { data } = await ocrWorker.recognize(blob);
+    if(run !== ocrRun) return;                       // a newer photo was taken
+    const d = parseBillDate(data.text);
+    const a = isFuel(F('type').value) ? null : parseBillAmount(data.text);
+    const got = [];
+    if(d && F('date').value === startDate){ F('date').value = d; F('date').classList.add('ocr'); got.push('date ' + dmy(d)); }
+    if(a != null && !F('bill').value && !startBill){ F('bill').value = a.toFixed(2); F('bill').classList.add('ocr'); got.push('amount ' + inr(a)); }
+    note.textContent = got.length
+      ? 'Read from bill: ' + got.join(', ') + '. Please check before saving.'
+      : 'Could not read the date or amount from this bill. Please enter them yourself.';
+    refreshCalc(); preloadMonth();
+  }catch(e){ if(run === ocrRun) note.textContent = e.message; }
+}
 
 /* ---------- add form ---------- */
 const F = id => $('#f-' + id);
@@ -497,6 +612,7 @@ function resetForm(keepContext){
   F('names').value = F('names').value || cfg.myName;
   F('rate').value = '';
   F('location').value = F('location').value || cfg.lastLocation;
+  ocrRun++; clearOcrMarks();
   photoBlob = null; $('#f-preview').hidden = true; $('#f-photo').value = '';
   $('#btn-photo').textContent = '📷 Take bill photo';
   syncTypeFields(); refreshCalc();
@@ -508,6 +624,7 @@ async function preloadMonth(){
 }
 ['date','type','scope','meals','fuel','vehicle','rate','km','pax','bill'].forEach(id => F(id).addEventListener('input', () => { syncTypeFields(); refreshCalc(); }));
 F('date').addEventListener('change', preloadMonth);
+['date','bill'].forEach(id => F(id).addEventListener('input', () => F(id).classList.remove('ocr')));
 F('fuel').addEventListener('change', () => { F('rate').value = ''; rateHint(); refreshCalc(); });
 
 let saving = false;
@@ -538,7 +655,8 @@ $('#btn-save').onclick = async () => {
       amount:c.amount, remarks, photo, photoUrl, saved:new Date().toISOString()};
     m.entries.push(entry);
     status('Saving…', true);
-    try{ await saveJson(key); }catch(err){ m.entries.pop(); throw err; }
+    try{ await renumber(m, key); await saveJson(key); }
+    catch(err){ delete months[key]; throw err; }
     if(!cfg.projects.includes(e.project)) cfg.projects.unshift(e.project);
     cfg.projects = cfg.projects.slice(0, 15);
     if(e.location && !cfg.locations.includes(e.location)) cfg.locations.push(e.location);
@@ -547,7 +665,7 @@ $('#btn-save').onclick = async () => {
     if(e.type === 'Diesel') cfg.dieselRate = e.fuelRate;
     saveCfg(); fillLists();
     await saveExcel(key);
-    status(`Saved line ${line} · ${inr(c.amount)}`);
+    status(`Saved as line ${entry.line} · ${inr(c.amount)}`);
     resetForm(true);
   }catch(err){
     status(err.message, true); setTimeout(() => status(''), 7000);
@@ -595,11 +713,7 @@ $('#l-items').addEventListener('click', async ev => {
     status('Deleting…', true);
     if(e.photo) await delFile(m.folderId, e.photo);
     m.entries.splice(line - 1, 1);
-    for(let i = line - 1; i < m.entries.length; i++){
-      const x = m.entries[i], nl = i + 1;
-      if(x.photo && x.photo !== nl + '.jpg'){ const it = await (await renameFile(m.folderId, x.photo, nl + '.jpg')).json(); x.photo = nl + '.jpg'; x.photoUrl = it.webUrl; }
-      x.line = nl;
-    }
+    await renumber(m, key);
     await saveJson(key); await saveExcel(key);
     status('Deleted line ' + line); renderList();
   }catch(err){ status(err.message); delete months[key]; renderList(); }
@@ -615,7 +729,7 @@ $('#l-advance').addEventListener('input', () => {
 });
 $('#btn-rebuild').onclick = async () => {
   const key = cfg.claimFolder;
-  try{ status('Rebuilding Excel…', true); delete months[key]; await loadMonth(key); await saveExcel(key); status('Excel rebuilt'); renderList(); }
+  try{ status('Rebuilding Excel…', true); delete months[key]; const m = await loadMonth(key); await renumber(m, key); await saveJson(key); await saveExcel(key); status('Excel rebuilt'); renderList(); }
   catch(err){ status(err.message); }
 };
 $('#btn-open').onclick = async () => {

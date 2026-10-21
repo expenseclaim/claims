@@ -217,7 +217,7 @@ a{color:var(--brand)}
   </div>
   <div class="list" id="l-items"></div>
   <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit claim</button></p>
-  <p class="muted" id="submit-hint" hidden>Finalises the claim Excel, moves the claim folder to “Submitted” and shares it with the finance team (view only). It is then no longer shown here.</p>
+  <p class="muted" id="submit-hint" hidden>Finalises the claim Excel and moves the claim folder to “Submitted” in your OneDrive. It is then no longer shown here.</p>
 </section>
 
 <!-- SETTINGS -->
@@ -241,11 +241,7 @@ a{color:var(--brand)}
       <label for="s-name">Your name (default for Names)</label>
       <input id="s-name" placeholder="Enter your name">
     </div>
-    <div>
-      <label for="s-finance">Finance team email</label>
-      <input id="s-finance" type="email" inputmode="email" placeholder="Enter finance team email">
-      <p class="muted">Submitted claims are shared with this address (view only).</p>
-    </div>
+
     <div>
 
     </div>
@@ -292,8 +288,6 @@ a{color:var(--brand)}
 <script>
 /* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
 const BUILT_IN_CLIENT_ID = '757ceeb7-c4d4-4f13-8823-25e8bc87dae7';
-/* ---------- SET THIS ONCE: finance team email(s) that submitted claims are shared with (several: separate with ; ) ---------- */
-const BUILT_IN_FINANCE_EMAIL = '';
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -301,7 +295,7 @@ const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch{ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 };
-const cfg = Object.assign({clientId:'', myName:'', driveId:'', financeEmail:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
+const cfg = Object.assign({clientId:'', myName:'', driveId:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
 const saveCfg = () => LS.set('cfg', cfg);
 const isFuel = t => t === 'Fuel' || t === 'Petrol' || t === 'Diesel';
 const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
@@ -1108,15 +1102,13 @@ $('#btn-submit').onclick = async () => {
   if(submitting) return;
   const key = cfg.claimFolder;
   if(!key){ status('Choose a claim folder first.'); return; }
-  const fin = (cfg.financeEmail || BUILT_IN_FINANCE_EMAIL).split(/[;,]/).map(x => x.trim()).filter(Boolean);
-  if(!fin.length){ status('Enter the finance team email in Settings first.'); return; }
   submitting = true; $('#btn-submit').disabled = true;
   try{
     const m = await loadMonth(key);
     if(!m.entries.length){ status('There are no claim lines to submit.'); return; }
     const total = r2(m.entries.reduce((x, e) => x + e.amount, 0)), adv = +m.advance || 0, bal = r2(total - adv);
     const dates = m.entries.map(e => e.date).sort();
-    if(!confirm(`Submit “${key}”?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nThe claim folder will move to “${SUBMITTED}” in your OneDrive and be shared (view only) with:\n${fin.join(', ')}\n\nIt will no longer be shown in the app. You can’t add lines to it afterwards.`)) return;
+    if(!confirm(`Submit “${key}”?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nThe claim folder will move to “${SUBMITTED}” in your OneDrive and will no longer be shown in the app. You can’t add lines to it afterwards.`)) return;
 
     status('Updating the claim Excel…', true);
     await renumber(m, key); await saveJson(key); await saveExcel(key);
@@ -1128,27 +1120,20 @@ $('#btn-submit').onclick = async () => {
     await g(`${D()}/${m.folderId}?@microsoft.graph.conflictBehavior=rename`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentReference:{id:sub.id}})});
 
     delete months[key]; cfg.claimFolder = ''; saveCfg();
-    status('Sharing with the finance team…', true);
-    let shared = true;
-    try{
-      await g(`${D()}/${m.folderId}/invite`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
-        recipients: fin.map(email => ({ email })), roles: ['read'], requireSignIn: true, sendInvitation: false })});
-    }catch(e){ shared = false; status('Claim moved to “' + SUBMITTED + '”, but sharing with finance failed: ' + e.message + ' Share the folder from OneDrive manually.', true); }
     await loadClaimFolders(); renderList(); preloadMonth(); refreshCalc();
-    if(shared) status(`✓ “${key}” submitted (${inr(bal)}) and shared with the finance team.`);
+    status(`✓ “${key}” submitted (${inr(bal)}). It is now in the “${SUBMITTED}” folder.`);
   }catch(err){ status(err.message, true); setTimeout(() => status(''), 8000); }
   finally{ submitting = false; $('#btn-submit').disabled = false; }
 };
 
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
-  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName; $('#s-finance').value = cfg.financeEmail || BUILT_IN_FINANCE_EMAIL;
+  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
   $('#btn-signin').hidden = !!account; $('#btn-signout').hidden = !account;
 }
 $('#s-client').addEventListener('change', async () => { cfg.clientId = $('#s-client').value.trim(); saveCfg(); await initAuth(); renderSettings(); });
-$('#s-finance').addEventListener('change', () => { cfg.financeEmail = $('#s-finance').value.trim(); saveCfg(); });
 $('#s-name').addEventListener('change', () => { cfg.myName = $('#s-name').value.trim(); saveCfg(); if(!F('names').value) F('names').value = cfg.myName; });
 $('#btn-signin').onclick = async () => { try{ await token(); renderSettings(); }catch(e){ status(e.message); } };
 $('#btn-signout').onclick = async () => { if(pca && account){ await pca.logoutRedirect({account}); } };

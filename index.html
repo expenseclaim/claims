@@ -109,6 +109,11 @@ input.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--
 .sc-actions .sec{background:#2a2a2a;color:#fff}
 .sc-actions .pri{background:#0096d6;color:#ffffff}
 .sc-actions button:disabled{opacity:.5}
+.install-box{padding:22px 18px 0;text-align:center}
+.install-box img{height:44px;width:auto;margin:4px auto 14px;display:block}
+.install-box h2{font-size:19px;margin:0 0 6px;color:var(--brand)}
+.install-box ol{text-align:left;margin:14px 0 4px;padding-left:22px;line-height:1.6}
+.install-box .foot{margin:16px -18px 0}
 .claimbar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
 .claimbar label{margin-top:0}
 .claimbar button{padding:11px 14px}
@@ -229,7 +234,7 @@ a{color:var(--brand)}
 <!-- SETTINGS -->
 <section id="tab-set" hidden>
   <div class="stack">
-    <div id="ios-hint" class="note" hidden>On iPhone: open this page in <b>Safari</b>, tap <b>Share</b> (the square with an arrow) → <b>Add to Home Screen</b>, then open Claims from the home screen.</div>
+    <button class="ghost" id="btn-install" type="button" hidden>📲 Add app to home screen</button>
     <div>
       <label for="s-client">Microsoft app (client) ID</label>
       <input id="s-client" placeholder="Enter Microsoft app (client) ID" autocomplete="off">
@@ -276,6 +281,19 @@ a{color:var(--brand)}
     <button type="button" class="sec" id="sc-cancel">Cancel</button>
     <button type="button" class="sec" id="sc-asis">Use as is</button>
     <button type="button" class="pri" id="sc-done">Done</button>
+  </div>
+</div>
+
+<div class="modal" id="install">
+  <div class="box install-box">
+    <img id="inst-logo" alt="StarOne IT">
+    <h2>Add Travel Claims to your home screen</h2>
+    <p class="muted">Open it like an app, full screen, with the StarOne IT icon.</p>
+    <div id="inst-steps"></div>
+    <div class="foot">
+      <button class="ghost" id="inst-later" type="button">Not now</button>
+      <button class="primary" id="inst-go" type="button" style="width:auto">Add to home screen</button>
+    </div>
   </div>
 </div>
 
@@ -1320,6 +1338,44 @@ document.querySelectorAll('.newclaim').forEach(btn => btn.addEventListener('clic
   }catch(e){ status(e.message); }
 }));
 
+/* ---------- add to home screen (first open) ---------- */
+let installEvt = null;
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isInstalled = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); installEvt = ev; $('#btn-install').hidden = isInstalled(); });
+window.addEventListener('appinstalled', () => { installEvt = null; $('#install').style.display = 'none'; $('#btn-install').hidden = true; status('✓ Travel Claims added to your home screen.'); });
+function showInstall(){
+  if(isInstalled()) return;
+  $('#inst-logo').src = document.querySelector('header img').src;
+  const steps = $('#inst-steps'), go = $('#inst-go');
+  if(installEvt){
+    steps.innerHTML = '';
+    go.hidden = false;
+  }else if(isIOS){
+    steps.innerHTML = '<ol><li>Open this page in <b>Safari</b>.</li><li>Tap <b>Share</b> (the square with an arrow ⬆).</li><li>Tap <b>Add to Home Screen</b>, then <b>Add</b>.</li></ol>';
+    go.hidden = true;
+  }else{
+    steps.innerHTML = '<ol><li>Open this page in <b>Chrome</b>.</li><li>Tap the menu <b>⋮</b> (top right).</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b>.</li></ol>';
+    go.hidden = true;
+  }
+  $('#install').style.display = 'block';
+}
+$('#inst-go').onclick = async () => {
+  if(!installEvt) return;
+  installEvt.prompt();
+  const r = await installEvt.userChoice.catch(() => ({}));
+  installEvt = null;
+  $('#install').style.display = 'none';
+  if(r && r.outcome === 'dismissed'){ cfg.installAsked = true; saveCfg(); }
+};
+$('#inst-later').onclick = () => { cfg.installAsked = true; saveCfg(); $('#install').style.display = 'none'; };
+$('#btn-install').onclick = showInstall;
+if(!isInstalled()){
+  $('#btn-install').hidden = false;
+  // first open: wait briefly for Chrome's install event, then ask once
+  if(!cfg.installAsked) setTimeout(showInstall, 2500);
+}
+
 /* ---------- tabs ---------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.removeAttribute('aria-current'));
@@ -1355,7 +1411,6 @@ async function prepareTools(){
   fillLists();
   F('names').value = cfg.myName; F('location').value = cfg.lastLocation;
   resetForm(false);
-  if(/iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone) $('#ios-hint').hidden = false;
   setTimeout(prepareTools, 1500);
   try{ await initAuth(); }catch(e){ status('Sign-in problem: ' + e.message); }
   renderSettings();

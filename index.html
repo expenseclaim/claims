@@ -82,6 +82,24 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .muted{color:var(--muted);font-size:14px}
 input.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--bill) 35%,transparent)}
 #ocr-note{font-size:14px;margin-top:8px;color:var(--muted)}
+.photo-btns{display:flex;flex-direction:column;gap:8px;flex:1}
+.scanner{position:fixed;inset:0;background:#111;color:#fff;z-index:40;display:flex;flex-direction:column;
+  padding:calc(10px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px))}
+.scanner[hidden]{display:none}
+.sc-top b{display:block;font-size:17px}
+.sc-top span{font-size:14px;color:#cfd8d5}
+.sc-stage{position:relative;flex:1;margin:12px 0;touch-action:none}
+.sc-stage canvas,.sc-stage svg{position:absolute}
+.sc-stage polygon{fill:rgba(146,208,80,.18);stroke:#92d050;stroke-width:2.5}
+.sc-h{position:absolute;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:3px solid #92d050;background:rgba(0,0,0,.35);touch-action:none}
+.sc-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
+.sc-modes button{background:#2a2a2a;color:#fff;padding:10px 4px;font-size:14px}
+.sc-modes button[aria-pressed="true"]{background:#92d050;color:#10230a}
+.sc-actions{display:grid;grid-template-columns:1fr 1fr 1.3fr;gap:8px}
+.sc-actions button{padding:13px 6px}
+.sc-actions .sec{background:#2a2a2a;color:#fff}
+.sc-actions .pri{background:#92d050;color:#10230a}
+.sc-actions button:disabled{opacity:.5}
 .claimbar{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end}
 .claimbar label{margin-top:0}
 .claimbar button{padding:11px 14px}
@@ -96,6 +114,7 @@ a{color:var(--brand)}
 </header>
 
 <main>
+<div id="prep" class="note" hidden></div>
 <!-- ADD -->
 <section id="tab-add">
   <div class="claimbar"><div><label for="f-folder">Claim folder</label><select id="f-folder" class="claimsel"></select></div><button class="ghost newclaim" type="button">+ New</button></div>
@@ -148,8 +167,12 @@ a{color:var(--brand)}
 
   <div class="photo">
     <img id="f-preview" alt="Bill photo" hidden>
-    <button class="ghost" id="btn-photo" type="button">📷 Take bill photo</button>
+    <div class="photo-btns">
+      <button class="ghost" id="btn-photo" type="button">📷 Take bill photo</button>
+      <button class="ghost" id="btn-gallery" type="button">🖼️ Choose from gallery</button>
+    </div>
     <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
+    <input type="file" id="f-gallery" accept="image/*" hidden>
   </div>
   <div id="ocr-note" aria-live="polite"></div>
 
@@ -219,6 +242,25 @@ a{color:var(--brand)}
   <button data-tab="list">Claims</button>
   <button data-tab="set">Settings</button>
 </nav>
+
+<div class="scanner" id="scanner" hidden>
+  <div class="sc-top"><b>Adjust the bill edges</b><span id="sc-hint"></span></div>
+  <div class="sc-stage" id="sc-stage">
+    <canvas id="sc-canvas"></canvas>
+    <svg id="sc-svg"><polygon id="sc-poly"/></svg>
+    <div class="sc-h"></div><div class="sc-h"></div><div class="sc-h"></div><div class="sc-h"></div>
+  </div>
+  <div class="sc-modes">
+    <button type="button" data-scanmode="clean">Clean colour</button>
+    <button type="button" data-scanmode="bw">Black &amp; white</button>
+    <button type="button" data-scanmode="original">Original colour</button>
+  </div>
+  <div class="sc-actions">
+    <button type="button" class="sec" id="sc-cancel">Cancel</button>
+    <button type="button" class="sec" id="sc-asis">Use as is</button>
+    <button type="button" class="pri" id="sc-done">Done</button>
+  </div>
+</div>
 
 <div class="modal" id="picker">
   <div class="box">
@@ -468,17 +510,177 @@ async function compress(file){
   return new Promise(res => c.toBlob(res, 'image/jpeg', 0.82));
 }
 $('#btn-photo').onclick = () => $('#f-photo').click();
-$('#f-photo').onchange = async ev => {
+$('#btn-gallery').onclick = () => $('#f-gallery').click();
+/* ---------- document scanner (flatten + clean, like a scanner app) ---------- */
+let cvReady = null;
+function loadCV(){
+  if(cvReady) return cvReady;
+  cvReady = new Promise((ok, fail) => {
+    const sc = document.createElement('script');
+    sc.src = 'https://docs.opencv.org/4.8.0/opencv.js';
+    sc.async = true;
+    sc.onerror = () => { cvReady = null; fail(new Error('Could not load the scanner (check internet).')); };
+    sc.onload = () => {
+      if(window.cv && typeof window.cv.then === 'function' && !window.cv.Mat) window.cv.then(m => { window.cv = m; });
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if(window.cv && window.cv.Mat && window.cv.imread){ clearInterval(iv); ok(); }
+        else if(Date.now() - t0 > 90000){ clearInterval(iv); cvReady = null; fail(new Error('The scanner took too long to load.')); }
+      }, 150);
+    };
+    document.head.appendChild(sc);
+  });
+  return cvReady;
+}
+function orderPts(p){
+  const sum = p.map(q => q.x + q.y), diff = p.map(q => q.y - q.x);
+  return [p[sum.indexOf(Math.min(...sum))], p[diff.indexOf(Math.min(...diff))],
+          p[sum.indexOf(Math.max(...sum))], p[diff.indexOf(Math.max(...diff))]];
+}
+function defaultPts(w, h){ const m = 0.04; return [{x:w*m,y:h*m},{x:w*(1-m),y:h*m},{x:w*(1-m),y:h*(1-m)},{x:w*m,y:h*(1-m)}]; }
+function detectCorners(bmp){
+  const s = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
+  c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+  const src = cv.imread(c), gray = new cv.Mat(), edges = new cv.Mat(), contours = new cv.MatVector(), hier = new cv.Mat();
+  let best = null, bestArea = 0;
+  try{
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+    cv.Canny(gray, edges, 40, 120);
+    const k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+    cv.dilate(edges, edges, k); k.delete();
+    cv.findContours(edges, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    const minArea = c.width * c.height * 0.12;
+    for(let i = 0; i < contours.size(); i++){
+      const cnt = contours.get(i), area = cv.contourArea(cnt);
+      if(area > minArea && area > bestArea){
+        const ap = new cv.Mat();
+        cv.approxPolyDP(cnt, ap, 0.02 * cv.arcLength(cnt, true), true);
+        if(ap.rows === 4 && cv.isContourConvex(ap)){
+          bestArea = area; best = [];
+          for(let j = 0; j < 4; j++) best.push({x: ap.data32S[j*2] / s, y: ap.data32S[j*2+1] / s});
+        }
+        ap.delete();
+      }
+      cnt.delete();
+    }
+  }finally{ src.delete(); gray.delete(); edges.delete(); contours.delete(); hier.delete(); }
+  return best ? {pts: orderPts(best), auto: true} : {pts: defaultPts(bmp.width, bmp.height), auto: false};
+}
+function removeShadow(g){
+  const bg = new cv.Mat(), k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9));
+  cv.dilate(g, bg, k); k.delete();
+  cv.medianBlur(bg, bg, 21);
+  const diff = new cv.Mat(); cv.absdiff(g, bg, diff); bg.delete();
+  cv.bitwise_not(diff, diff);
+  const out = new cv.Mat(); cv.normalize(diff, out, 0, 255, cv.NORM_MINMAX, cv.CV_8U); diff.delete();
+  return out;
+}
+function warpAndClean(bmp, pts, mode){
+  const c = document.createElement('canvas'); c.width = bmp.width; c.height = bmp.height;
+  c.getContext('2d').drawImage(bmp, 0, 0);
+  const src = cv.imread(c);
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const [tl, tr, br, bl] = pts;
+  let W = Math.max(d(tl, tr), d(bl, br)), H = Math.max(d(tl, bl), d(tr, br));
+  const k = Math.min(1, 2000 / Math.max(W, H)); W = Math.max(50, Math.round(W * k)); H = Math.max(50, Math.round(H * k));
+  const sm = cv.matFromArray(4, 1, cv.CV_32FC2, [tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y]);
+  const dm = cv.matFromArray(4, 1, cv.CV_32FC2, [0, 0, W, 0, W, H, 0, H]);
+  const M = cv.getPerspectiveTransform(sm, dm), flat = new cv.Mat();
+  cv.warpPerspective(src, flat, M, new cv.Size(W, H), cv.INTER_LINEAR, cv.BORDER_REPLICATE, new cv.Scalar());
+  src.delete(); sm.delete(); dm.delete(); M.delete();
+  let res = flat;
+  if(mode !== 'original'){
+    const rgb = new cv.Mat(); cv.cvtColor(flat, rgb, cv.COLOR_RGBA2RGB); flat.delete();
+    if(mode === 'bw'){
+      const g = new cv.Mat(); cv.cvtColor(rgb, g, cv.COLOR_RGB2GRAY); rgb.delete();
+      const even = removeShadow(g); g.delete();
+      let bs = Math.max(15, Math.round(Math.min(W, H) / 40)); if(bs % 2 === 0) bs++;
+      res = new cv.Mat(); cv.adaptiveThreshold(even, res, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bs, 12); even.delete();
+    }else{
+      const ch = new cv.MatVector(), outCh = new cv.MatVector(); cv.split(rgb, ch); rgb.delete();
+      for(let i = 0; i < 3; i++){ const m = ch.get(i), f = removeShadow(m); outCh.push_back(f); m.delete(); f.delete(); }
+      res = new cv.Mat(); cv.merge(outCh, res); ch.delete(); outCh.delete();
+      res.convertTo(res, -1, 1.4, -102);   // darker text, white paper
+    }
+  }
+  const oc = document.createElement('canvas'); cv.imshow(oc, res); res.delete();
+  return new Promise(r => oc.toBlob(r, 'image/jpeg', 0.85));
+}
+function openScanner(blob){
+  return new Promise(async resolve => {
+    const ov = $('#scanner'), stage = $('#sc-stage'), cvs = $('#sc-canvas'), svg = $('#sc-svg'), hint = $('#sc-hint');
+    const handles = [...document.querySelectorAll('.sc-h')];
+    ov.hidden = false; document.body.style.overflow = 'hidden';
+    $('#sc-done').disabled = true; hint.textContent = 'Loading scanner… (first time takes longer)';
+    const bmp = await createImageBitmap(blob);
+    const r = stage.getBoundingClientRect();
+    const sc = Math.min(r.width / bmp.width, r.height / bmp.height);
+    const dw = bmp.width * sc, dh = bmp.height * sc, ox = (r.width - dw) / 2, oy = (r.height - dh) / 2;
+    const box = `left:${ox}px;top:${oy}px;width:${dw}px;height:${dh}px`;
+    cvs.style.cssText = box; svg.style.cssText = box; svg.setAttribute('viewBox', `0 0 ${dw} ${dh}`);
+    const dpr = window.devicePixelRatio || 1;
+    cvs.width = Math.round(dw * dpr); cvs.height = Math.round(dh * dpr);
+    cvs.getContext('2d').drawImage(bmp, 0, 0, cvs.width, cvs.height);
+    let pts = defaultPts(bmp.width, bmp.height), busy = false;
+    const draw = () => {
+      $('#sc-poly').setAttribute('points', pts.map(p => `${p.x * sc},${p.y * sc}`).join(' '));
+      handles.forEach((h, i) => { h.style.left = (ox + pts[i].x * sc) + 'px'; h.style.top = (oy + pts[i].y * sc) + 'px'; });
+    };
+    draw();
+    handles.forEach((h, i) => {
+      h.onpointerdown = e => { h.setPointerCapture(e.pointerId); h.dataset.drag = '1'; };
+      h.onpointerup = h.onpointercancel = () => { delete h.dataset.drag; };
+      h.onpointermove = e => {
+        if(!h.dataset.drag) return;
+        const rr = stage.getBoundingClientRect();
+        pts[i] = { x: Math.min(bmp.width, Math.max(0, (e.clientX - rr.left - ox) / sc)),
+                   y: Math.min(bmp.height, Math.max(0, (e.clientY - rr.top - oy) / sc)) };
+        draw();
+      };
+    });
+    const setMode = m => { cfg.scanMode = m; saveCfg(); document.querySelectorAll('[data-scanmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.scanmode === m)); };
+    document.querySelectorAll('[data-scanmode]').forEach(b => b.onclick = () => setMode(b.dataset.scanmode));
+    setMode(cfg.scanMode || 'clean');
+    const finish = val => { ov.hidden = true; document.body.style.overflow = ''; bmp.close && bmp.close(); resolve(val); };
+    $('#sc-cancel').onclick = () => { if(!busy) finish(null); };
+    $('#sc-asis').onclick = () => { if(!busy) finish({blob}); };
+    $('#sc-done').onclick = async () => {
+      if(busy) return; busy = true; $('#sc-done').disabled = true; hint.textContent = 'Flattening and cleaning…';
+      await new Promise(r => setTimeout(r, 50));
+      try{ finish({blob: await warpAndClean(bmp, orderPts(pts), cfg.scanMode || 'clean')}); }
+      catch(e){ busy = false; $('#sc-done').disabled = false; hint.textContent = 'Could not process this photo. Tap “Use as is” instead.'; }
+    };
+    try{
+      await loadCV();
+      if(ov.hidden) return;
+      const det = detectCorners(bmp);
+      pts = det.pts; draw();
+      hint.textContent = det.auto ? 'Bill edges found. Drag the corners to adjust if needed.' : 'Couldn’t find the bill edges. Drag the 4 corners onto the bill corners.';
+      $('#sc-done').disabled = false;
+    }catch(e){ hint.textContent = e.message + ' Tap “Use as is” to keep the photo.'; }
+  });
+}
+
+const onPicked = async ev => {
   const f = ev.target.files[0]; if(!f) return;
   status('Preparing photo…', true);
   try{
-    photoBlob = await compress(f);
+    const raw = await compress(f);
+    status('');
+    const res = await openScanner(raw);
+    if(!res){ ev.target.value = ''; return; }
+    photoBlob = res.blob;
     const p = $('#f-preview'); p.src = URL.createObjectURL(photoBlob); p.hidden = false;
     $('#btn-photo').textContent = '📷 Retake photo';
     status('');
     readBill(photoBlob);
   }catch(e){ status('Could not read that photo. Try again.'); }
+  ev.target.value = '';
 };
+$('#f-photo').onchange = onPicked;
+$('#f-gallery').onchange = onPicked;
 
 /* ---------- read date & amount from bill text ---------- */
 const MONTHS = {jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12};
@@ -542,7 +744,12 @@ function parseBillAmount(text){
   return v == null ? null : Math.round(v * 100) / 100;
 }
 
-let ocrWorker = null, ocrRun = 0;
+let ocrWorker = null, ocrWorkerP = null, ocrRun = 0;
+function getOcrWorker(){
+  if(!ocrWorkerP) ocrWorkerP = loadTesseract().then(() => Tesseract.createWorker('eng')).then(w => (ocrWorker = w))
+    .catch(e => { ocrWorkerP = null; throw e; });
+  return ocrWorkerP;
+}
 function loadTesseract(){
   if(window.Tesseract) return Promise.resolve();
   return new Promise((ok, fail) => {
@@ -560,9 +767,8 @@ async function readBill(blob){
   const note = $('#ocr-note');
   note.textContent = 'Reading the bill… (first time takes longer). You can keep filling the form.';
   try{
-    await loadTesseract();
-    if(!ocrWorker) ocrWorker = await Tesseract.createWorker('eng');
-    const { data } = await ocrWorker.recognize(blob);
+    const worker = await getOcrWorker();
+    const { data } = await worker.recognize(blob);
     if(run !== ocrRun) return;                       // a newer photo was taken
     const d = parseBillDate(data.text);
     const a = isFuel(F('type').value) ? null : parseBillAmount(data.text);
@@ -832,11 +1038,32 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
 });
 
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+
+/* ---------- one-time download of the scanner and bill reader ---------- */
+async function prepareTools(){
+  if(cfg.prepDone) return;
+  const el = $('#prep');
+  el.hidden = false;
+  el.textContent = 'Downloading the scanner and bill reader for first use (about 15–20 MB, one time only)…';
+  try{
+    if('serviceWorker' in navigator) await Promise.race([navigator.serviceWorker.ready, new Promise(r => setTimeout(r, 5000))]);
+    await getOcrWorker();
+    el.textContent = 'Bill reader ready. Downloading the scanner…';
+    await loadCV();
+    cfg.prepDone = true; saveCfg();
+    el.textContent = '✓ Scanner and bill reader are ready.';
+    setTimeout(() => el.hidden = true, 4000);
+  }catch(e){
+    el.textContent = 'The one-time download didn’t finish. It will try again next time you open the app.';
+    setTimeout(() => el.hidden = true, 7000);
+  }
+}
 /* ---------- start ---------- */
 (async () => {
   fillLists();
   F('names').value = cfg.myName; F('location').value = cfg.lastLocation;
   resetForm(false);
+  setTimeout(prepareTools, 1500);
   try{ await initAuth(); }catch(e){ status('Sign-in problem: ' + e.message); }
   renderSettings();
   if(!cfg.clientId || !account || !cfg.folderId){

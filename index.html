@@ -216,8 +216,8 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-open">Open Excel</button>
   </div>
   <div class="list" id="l-items"></div>
-  <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit to finance</button></p>
-  <p class="muted" id="submit-hint" hidden>Sends the claim Excel and a link to the bill photos by email from your account. The claim folder is then moved to “Submitted” and no longer shown here.</p>
+  <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit claim</button></p>
+  <p class="muted" id="submit-hint" hidden>Finalises the claim Excel and moves the claim folder to “Submitted”, where the finance team can pick it up. It is then no longer shown here.</p>
 </section>
 
 <!-- SETTINGS -->
@@ -240,14 +240,6 @@ a{color:var(--brand)}
     <div>
       <label for="s-name">Your name (default for Names)</label>
       <input id="s-name" placeholder="Enter your name">
-    </div>
-    <div>
-      <label for="s-finance">Finance team email</label>
-      <input id="s-finance" type="email" inputmode="email" placeholder="Enter finance team email">
-    </div>
-    <div>
-      <label for="s-manager">Manager email (copied on submission)</label>
-      <input id="s-manager" type="email" inputmode="email" placeholder="Enter your manager’s email (optional)">
     </div>
     <div>
 
@@ -295,8 +287,6 @@ a{color:var(--brand)}
 <script>
 /* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
 const BUILT_IN_CLIENT_ID = '757ceeb7-c4d4-4f13-8823-25e8bc87dae7';
-/* ---------- SET THIS ONCE: finance team email that receives submitted claims (several: separate with ; ) ---------- */
-const BUILT_IN_FINANCE_EMAIL = '';
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -304,7 +294,7 @@ const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch{ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 };
-const cfg = Object.assign({clientId:'', myName:'', driveId:'', financeEmail:'', managerEmail:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
+const cfg = Object.assign({clientId:'', myName:'', driveId:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
 const saveCfg = () => LS.set('cfg', cfg);
 const isFuel = t => t === 'Fuel' || t === 'Petrol' || t === 'Diesel';
 const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
@@ -324,7 +314,6 @@ function status(msg, sticky){
 /* ---------- Microsoft sign-in + OneDrive (Graph) ---------- */
 // Files.ReadWrite.All: needed to save into a folder someone else (e.g. finance) shared with you
 const SCOPES = ['User.Read', 'Files.ReadWrite.All'];
-const MAIL_SCOPES = ['User.Read', 'Files.ReadWrite.All', 'Mail.Send'];
 const D = (drive = cfg.driveId) => drive ? `/drives/${drive}/items` : '/me/drive/items';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 let pca = null, account = null;
@@ -1104,75 +1093,33 @@ $('#btn-open').onclick = async () => {
   }catch(err){ status(err.status === 404 ? 'No Excel file for this month yet.' : err.message); }
 };
 
-/* ---------- submit a claim folder to the finance team ---------- */
+/* ---------- submit a claim: finalise and move it to Submitted ---------- */
 const SUBMITTED = 'Submitted';
-const blobToB64 = b => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = fail; r.readAsDataURL(b); });
-const emails = t => (t || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
 let submitting = false;
 $('#btn-submit').onclick = async () => {
   if(submitting) return;
   const key = cfg.claimFolder;
-  const to = emails(cfg.financeEmail || BUILT_IN_FINANCE_EMAIL), cc = emails(cfg.managerEmail);
   if(!key){ status('Choose a claim folder first.'); return; }
-  if(!to.length){ status('Enter the finance team email in Settings first.'); return; }
   submitting = true; $('#btn-submit').disabled = true;
   try{
     const m = await loadMonth(key);
     if(!m.entries.length){ status('There are no claim lines to submit.'); return; }
     const total = r2(m.entries.reduce((x, e) => x + e.amount, 0)), adv = +m.advance || 0, bal = r2(total - adv);
     const dates = m.entries.map(e => e.date).sort();
-    if(!confirm(`Submit “${key}” to the finance team?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nTo: ${to.join(', ')}${cc.length ? '\nCc: ' + cc.join(', ') : ''}\n\nAfter submitting, this claim folder moves to “${SUBMITTED}” in OneDrive and is no longer shown in the app.`)) return;
+    if(!confirm(`Submit “${key}”?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nThe claim folder will move to “${SUBMITTED}” in OneDrive and will no longer be shown in the app. You can’t add lines to it afterwards.`)) return;
 
     status('Updating the claim Excel…', true);
     await renumber(m, key); await saveJson(key); await saveExcel(key);
-
-    status('Creating a link to the bills…', true);
-    let link = '';
-    try{
-      const r = await (await g(`${D()}/${m.folderId}/createLink`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'view', scope:'organization'})})).json();
-      link = r.link.webUrl;
-    }catch(e){ link = (await (await g(`${D()}/${m.folderId}`)).json()).webUrl; }
-
-    status('Sending the claim email…', true);
-    const name = cfg.myName || (account && account.name) || '';
-    const rowsHtml = m.entries.map(e => `<tr><td>${e.line}</td><td>${dmy(e.date)}</td><td>${esc(e.project)}</td><td>${esc(e.type)}</td><td>${esc(e.names)}</td><td style="text-align:right">${(+e.amount).toFixed(2)}</td><td>${e.photo ? 'Bill attached' : 'No bill'}${e.remarks ? ' – ' + esc(e.remarks) : ''}</td></tr>`).join('');
-    const td = 'style="border:1px solid #ccc;padding:4px 8px"';
-    const html = `<p>Dear Finance team,</p>
-<p>Please find my travel expense claim <b>${esc(key)}</b> for reimbursement.</p>
-<table style="border-collapse:collapse">
-<tr><td ${td}>Employee</td><td ${td}><b>${esc(name)}</b> (${esc(account.username)})</td></tr>
-<tr><td ${td}>Period</td><td ${td}>${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}</td></tr>
-<tr><td ${td}>Lines</td><td ${td}>${m.entries.length}</td></tr>
-<tr><td ${td}>Total</td><td ${td}><b>${inr(total)}</b></td></tr>
-<tr><td ${td}>Advance</td><td ${td}>${inr(adv)}</td></tr>
-<tr><td ${td}>Balance to reimburse</td><td ${td}><b>${inr(bal)}</b></td></tr>
-</table>
-<p>Bill photos: <a href="${link}">open the claim folder in OneDrive</a>. The claim Excel is attached; each line also has a “View bill” link.</p>
-<table style="border-collapse:collapse;font-size:13px"><tr style="background:#2D2A6E;color:#fff"><th>Sl</th><th>Date</th><th>Project ID</th><th>Type</th><th>Names</th><th>Amount</th><th>Bill / Remarks</th></tr>${rowsHtml.replace(/<td/g, '<td ' + td)}</table>
-<p>${cc.length ? 'Manager copied for approval.' : ''}</p>
-<p>Regards,<br>${esc(name)}</p><p style="color:#888;font-size:12px">Sent from the Travel Claims app.</p>`;
-    const mail = { message: {
-        subject: `Travel claim – ${name} – ${key} – ${inr(bal)}`,
-        body: { contentType: 'HTML', content: html },
-        toRecipients: to.map(a => ({ emailAddress: { address: a } })),
-        ccRecipients: cc.map(a => ({ emailAddress: { address: a } })),
-        attachments: [{ '@odata.type': '#microsoft.graph.fileAttachment', name: `Expense_Claim_${key}.xlsx`,
-          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', contentBytes: await blobToB64(buildXlsx(key, m)) }] },
-      saveToSentItems: true };
-    await g('/me/sendMail', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(mail)}, MAIL_SCOPES);
-
-    m.submitted = { at: new Date().toISOString(), to: to.join('; '), cc: cc.join('; '), total, advance: adv, balance: bal };
+    m.submitted = { at: new Date().toISOString(), total, advance: adv, balance: bal };
     await saveJson(key);
 
     status('Moving the folder to “' + SUBMITTED + '”…', true);
-    try{
-      const sub = await ensureFolder(cfg.folderId, SUBMITTED);
-      await g(`${D()}/${m.folderId}?@microsoft.graph.conflictBehavior=rename`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentReference:{id:sub.id}})});
-    }catch(e){ status('Claim sent, but the folder could not be moved: ' + e.message, true); }
+    const sub = await ensureFolder(cfg.folderId, SUBMITTED);
+    await g(`${D()}/${m.folderId}?@microsoft.graph.conflictBehavior=rename`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentReference:{id:sub.id}})});
 
     delete months[key]; cfg.claimFolder = ''; saveCfg();
     await loadClaimFolders(); renderList(); preloadMonth(); refreshCalc();
-    status(`✓ “${key}” submitted to finance (${inr(bal)}). A copy is in your Sent Items.`);
+    status(`✓ “${key}” submitted (${inr(bal)}). It is now in the “${SUBMITTED}” folder.`);
   }catch(err){ status(err.message, true); setTimeout(() => status(''), 8000); }
   finally{ submitting = false; $('#btn-submit').disabled = false; }
 };
@@ -1180,14 +1127,11 @@ $('#btn-submit').onclick = async () => {
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
   $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
-  $('#s-finance').value = cfg.financeEmail || BUILT_IN_FINANCE_EMAIL; $('#s-manager').value = cfg.managerEmail;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
   $('#btn-signin').hidden = !!account; $('#btn-signout').hidden = !account;
 }
 $('#s-client').addEventListener('change', async () => { cfg.clientId = $('#s-client').value.trim(); saveCfg(); await initAuth(); renderSettings(); });
-$('#s-finance').addEventListener('change', () => { cfg.financeEmail = $('#s-finance').value.trim(); saveCfg(); });
-$('#s-manager').addEventListener('change', () => { cfg.managerEmail = $('#s-manager').value.trim(); saveCfg(); });
 $('#s-name').addEventListener('change', () => { cfg.myName = $('#s-name').value.trim(); saveCfg(); if(!F('names').value) F('names').value = cfg.myName; });
 $('#btn-signin').onclick = async () => { try{ await token(); renderSettings(); }catch(e){ status(e.message); } };
 $('#btn-signout').onclick = async () => { if(pca && account){ await pca.logoutRedirect({account}); } };

@@ -217,7 +217,7 @@ a{color:var(--brand)}
   </div>
   <div class="list" id="l-items"></div>
   <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit claim</button></p>
-  <p class="muted" id="submit-hint" hidden>Finalises the claim Excel and moves the claim folder to “Submitted”, where the finance team can pick it up. It is then no longer shown here.</p>
+  <p class="muted" id="submit-hint" hidden>Finalises the claim Excel, moves the claim folder to “Submitted” and shares it with the finance team (view only). It is then no longer shown here.</p>
 </section>
 
 <!-- SETTINGS -->
@@ -240,6 +240,11 @@ a{color:var(--brand)}
     <div>
       <label for="s-name">Your name (default for Names)</label>
       <input id="s-name" placeholder="Enter your name">
+    </div>
+    <div>
+      <label for="s-finance">Finance team email</label>
+      <input id="s-finance" type="email" inputmode="email" placeholder="Enter finance team email">
+      <p class="muted">Submitted claims are shared with this address (view only).</p>
     </div>
     <div>
 
@@ -287,6 +292,8 @@ a{color:var(--brand)}
 <script>
 /* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
 const BUILT_IN_CLIENT_ID = '757ceeb7-c4d4-4f13-8823-25e8bc87dae7';
+/* ---------- SET THIS ONCE: finance team email(s) that submitted claims are shared with (several: separate with ; ) ---------- */
+const BUILT_IN_FINANCE_EMAIL = '';
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -294,12 +301,13 @@ const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch{ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 };
-const cfg = Object.assign({clientId:'', myName:'', driveId:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
+const cfg = Object.assign({clientId:'', myName:'', driveId:'', financeEmail:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
 const saveCfg = () => LS.set('cfg', cfg);
 const isFuel = t => t === 'Fuel' || t === 'Petrol' || t === 'Diesel';
 const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
 function rateHint(){ const f = F('fuel').value, r = lastRate(f); $('#lbl-rate').textContent = f + ' rate today ₹/L'; F('rate').placeholder = r ? 'Enter today’s rate (last ₹' + r + ')' : 'Enter today’s rate'; }
 if(BUILT_IN_CLIENT_ID && !cfg.clientId) cfg.clientId = BUILT_IN_CLIENT_ID;
+if(cfg.driveId){ cfg.driveId = ''; cfg.folderId = ''; cfg.folderPath = ''; cfg.claimFolder = ''; LS.set('cfg', cfg); }   // shared folders no longer supported: choose a folder in your own OneDrive
 const r2 = n => Math.round((+n + Number.EPSILON) * 100) / 100;
 const inr = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});
 const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
@@ -312,8 +320,8 @@ function status(msg, sticky){
 }
 
 /* ---------- Microsoft sign-in + OneDrive (Graph) ---------- */
-// Files.ReadWrite.All: needed to save into a folder someone else (e.g. finance) shared with you
-const SCOPES = ['User.Read', 'Files.ReadWrite.All'];
+// Own OneDrive only: employees can approve this themselves, no admin needed
+const SCOPES = ['User.Read', 'Files.ReadWrite'];
 const D = (drive = cfg.driveId) => drive ? `/drives/${drive}/items` : '/me/drive/items';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 let pca = null, account = null;
@@ -1100,13 +1108,15 @@ $('#btn-submit').onclick = async () => {
   if(submitting) return;
   const key = cfg.claimFolder;
   if(!key){ status('Choose a claim folder first.'); return; }
+  const fin = (cfg.financeEmail || BUILT_IN_FINANCE_EMAIL).split(/[;,]/).map(x => x.trim()).filter(Boolean);
+  if(!fin.length){ status('Enter the finance team email in Settings first.'); return; }
   submitting = true; $('#btn-submit').disabled = true;
   try{
     const m = await loadMonth(key);
     if(!m.entries.length){ status('There are no claim lines to submit.'); return; }
     const total = r2(m.entries.reduce((x, e) => x + e.amount, 0)), adv = +m.advance || 0, bal = r2(total - adv);
     const dates = m.entries.map(e => e.date).sort();
-    if(!confirm(`Submit “${key}”?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nThe claim folder will move to “${SUBMITTED}” in OneDrive and will no longer be shown in the app. You can’t add lines to it afterwards.`)) return;
+    if(!confirm(`Submit “${key}”?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nThe claim folder will move to “${SUBMITTED}” in your OneDrive and be shared (view only) with:\n${fin.join(', ')}\n\nIt will no longer be shown in the app. You can’t add lines to it afterwards.`)) return;
 
     status('Updating the claim Excel…', true);
     await renumber(m, key); await saveJson(key); await saveExcel(key);
@@ -1118,20 +1128,27 @@ $('#btn-submit').onclick = async () => {
     await g(`${D()}/${m.folderId}?@microsoft.graph.conflictBehavior=rename`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentReference:{id:sub.id}})});
 
     delete months[key]; cfg.claimFolder = ''; saveCfg();
+    status('Sharing with the finance team…', true);
+    let shared = true;
+    try{
+      await g(`${D()}/${m.folderId}/invite`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({
+        recipients: fin.map(email => ({ email })), roles: ['read'], requireSignIn: true, sendInvitation: false })});
+    }catch(e){ shared = false; status('Claim moved to “' + SUBMITTED + '”, but sharing with finance failed: ' + e.message + ' Share the folder from OneDrive manually.', true); }
     await loadClaimFolders(); renderList(); preloadMonth(); refreshCalc();
-    status(`✓ “${key}” submitted (${inr(bal)}). It is now in the “${SUBMITTED}” folder.`);
+    if(shared) status(`✓ “${key}” submitted (${inr(bal)}) and shared with the finance team.`);
   }catch(err){ status(err.message, true); setTimeout(() => status(''), 8000); }
   finally{ submitting = false; $('#btn-submit').disabled = false; }
 };
 
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
-  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
+  $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName; $('#s-finance').value = cfg.financeEmail || BUILT_IN_FINANCE_EMAIL;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
   $('#btn-signin').hidden = !!account; $('#btn-signout').hidden = !account;
 }
 $('#s-client').addEventListener('change', async () => { cfg.clientId = $('#s-client').value.trim(); saveCfg(); await initAuth(); renderSettings(); });
+$('#s-finance').addEventListener('change', () => { cfg.financeEmail = $('#s-finance').value.trim(); saveCfg(); });
 $('#s-name').addEventListener('change', () => { cfg.myName = $('#s-name').value.trim(); saveCfg(); if(!F('names').value) F('names').value = cfg.myName; });
 $('#btn-signin').onclick = async () => { try{ await token(); renderSettings(); }catch(e){ status(e.message); } };
 $('#btn-signout').onclick = async () => { if(pca && account){ await pca.logoutRedirect({account}); } };
@@ -1150,12 +1167,9 @@ async function pkRender(){
         .map(x => ({id: x.remoteItem.id, name: x.name, drive: x.remoteItem.parentReference.driveId}));
     }else{
       const j = await (await g(`${D(cur.drive)}/${cur.id}/children?$select=id,name,folder,remoteItem&$top=200`)).json();
-      folders = j.value.filter(x => x.folder || (x.remoteItem && x.remoteItem.folder)).map(x => x.remoteItem
-        ? {id: x.remoteItem.id, name: x.name, drive: x.remoteItem.parentReference.driveId}   // shortcut to a shared folder
-        : {id: x.id, name: x.name, drive: cur.drive || ''});
+      folders = j.value.filter(x => x.folder).map(x => ({id: x.id, name: x.name, drive: ''}));
     }
     folders.sort((a, b) => a.name.localeCompare(b.name));
-    if(cur.id === 'root' && !cur.drive) folders.unshift({id: 'shared', name: 'Shared with me', drive: '', special: true});
     ul.innerHTML = folders.length ? folders.map(f => `<li><button data-id="${f.id}" data-name="${esc(f.name)}" data-drive="${f.drive}">${f.special ? '👥' : f.drive && !cur.drive ? '🔗' : '📁'} ${esc(f.name)}</button></li>`).join('')
       : '<li class="muted" style="padding:14px 16px">No subfolders. Use this folder or create a new one.</li>';
     $('#pk-pick').disabled = $('#pk-new').disabled = cur.id === 'shared';

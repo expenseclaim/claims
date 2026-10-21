@@ -312,7 +312,7 @@ a{color:var(--brand)}
 
 <script>
 /* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
-const BUILT_IN_CLIENT_ID = '757ceeb7-c4d4-4f13-8823-25e8bc87dae7';
+const BUILT_IN_CLIENT_ID = '428d9ad4-b365-44f3-bcfc-411806475c1c';
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -329,7 +329,8 @@ const TYPE_LABEL = {'Food':'Food Expenses', 'Ticket':'Travel Fare', 'Auto Charge
 const typeLabel = t => t === 'Petrol' || t === 'Diesel' ? `Conveyance Allowance – Own Vehicle (${t})` : (TYPE_LABEL[t] || t);
 const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
 function rateHint(){ const f = F('fuel').value, r = lastRate(f); $('#lbl-rate').textContent = f + ' rate today ₹/L'; F('rate').placeholder = r ? 'Enter today’s rate (last ₹' + r + ')' : 'Enter today’s rate'; }
-if(BUILT_IN_CLIENT_ID && !cfg.clientId) cfg.clientId = BUILT_IN_CLIENT_ID;
+// the built-in ID always wins, so phones that saved an older ID switch over automatically
+if(BUILT_IN_CLIENT_ID && cfg.clientId !== BUILT_IN_CLIENT_ID){ cfg.clientId = BUILT_IN_CLIENT_ID; LS.set('cfg', cfg); }
 if(cfg.driveId){ cfg.driveId = ''; cfg.folderId = ''; cfg.folderPath = ''; cfg.claimFolder = ''; LS.set('cfg', cfg); }   // shared folders no longer supported: choose a folder in your own OneDrive
 const r2 = n => Math.round((+n + Number.EPSILON) * 100) / 100;
 const inr = n => '₹' + (+n || 0).toLocaleString('en-IN', {minimumFractionDigits:2, maximumFractionDigits:2});

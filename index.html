@@ -46,7 +46,10 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:12px 16px
 .ghost{background:transparent;color:var(--brand);border:1.5px solid var(--line)}
 .danger{background:transparent;color:var(--err);border:1.5px solid var(--line);padding:8px 12px}
 .photo{display:flex;gap:12px;align-items:center;margin-top:16px}
-.photo img{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1.5px solid var(--line)}
+#photo-box{margin-top:12px}
+#photo-box img{display:block;width:100%;max-height:360px;object-fit:contain;background:var(--surface);border-radius:8px;border:1.5px solid var(--line)}
+#photo-box .row button{width:100%;padding:10px 8px;font-size:15px}
+#scan-note{font-size:14px;color:var(--muted);margin-top:6px}
 .amount{margin-top:18px;padding:14px;border-radius:10px;background:var(--surface);border:1.5px solid var(--line)}
 .amount strong{font-size:28px;display:block}
 .amount small{color:var(--muted)}
@@ -82,7 +85,8 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .muted{color:var(--muted);font-size:14px}
 input.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--bill) 35%,transparent)}
 #ocr-note{font-size:14px;margin-top:8px;color:var(--muted)}
-.photo-btns{display:flex;flex-direction:column;gap:8px;flex:1}
+.photo-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1}
+.photo-btns button{padding:12px 8px}
 .scanner{position:fixed;inset:0;background:#111;color:#fff;z-index:40;display:flex;flex-direction:column;
   padding:calc(10px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px))}
 .scanner[hidden]{display:none}
@@ -166,13 +170,20 @@ a{color:var(--brand)}
   <input id="f-remarks" placeholder="Enter remarks (optional)">
 
   <div class="photo">
-    <img id="f-preview" alt="Bill photo" hidden>
     <div class="photo-btns">
       <button class="ghost" id="btn-photo" type="button">📷 Take bill photo</button>
       <button class="ghost" id="btn-gallery" type="button">🖼️ Choose from gallery</button>
     </div>
     <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
     <input type="file" id="f-gallery" accept="image/*" hidden>
+  </div>
+  <div id="photo-box" hidden>
+    <img id="f-preview" alt="Scanned bill preview">
+    <div id="scan-note" aria-live="polite"></div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="btn-adjust" type="button">✂️ Adjust edges</button>
+      <button class="ghost" id="btn-original" type="button">Use original photo</button>
+    </div>
   </div>
   <div id="ocr-note" aria-live="polite"></div>
 
@@ -663,19 +674,47 @@ function openScanner(blob){
   });
 }
 
+let photoRaw = null;
+async function autoScan(raw){
+  await loadCV();
+  const bmp = await createImageBitmap(raw);
+  try{
+    const det = detectCorners(bmp);
+    const pts = det.auto ? det.pts : [{x:0,y:0},{x:bmp.width,y:0},{x:bmp.width,y:bmp.height},{x:0,y:bmp.height}];
+    return {blob: await warpAndClean(bmp, pts, cfg.scanMode || 'clean'), auto: det.auto};
+  }finally{ bmp.close && bmp.close(); }
+}
+function setPhoto(blob, note){
+  photoBlob = blob;
+  $('#f-preview').src = URL.createObjectURL(blob);
+  $('#photo-box').hidden = false;
+  $('#scan-note').textContent = note || '';
+  $('#btn-original').hidden = !photoRaw || blob === photoRaw;
+  $('#btn-photo').textContent = '📷 Retake';
+  readBill(blob);
+}
+$('#btn-adjust').onclick = async () => {
+  if(!photoRaw) return;
+  const r = await openScanner(photoRaw);
+  if(r) setPhoto(r.blob, r.blob === photoRaw ? 'Original photo kept.' : '✓ Edges adjusted and cleaned.');
+};
+$('#btn-original').onclick = () => { if(photoRaw) setPhoto(photoRaw, 'Original photo kept (not cleaned).'); };
 const onPicked = async ev => {
   const f = ev.target.files[0]; if(!f) return;
   status('Preparing photo…', true);
   try{
     const raw = await compress(f);
+    photoRaw = raw;
+    status(cfg.prepDone ? 'Cropping and cleaning the bill…' : 'Cropping and cleaning the bill… (first time takes longer)', true);
+    let blob = raw, note;
+    try{
+      const r = await autoScan(raw);
+      blob = r.blob;
+      note = r.auto ? '✓ Bill cropped, flattened and cleaned automatically.'
+                    : 'Couldn’t find the bill edges, so it was cleaned without cropping. Tap “Adjust edges” to crop it.';
+    }catch(e){ note = 'Scanner not available right now, so the original photo is kept.'; }
     status('');
-    const res = await openScanner(raw);
-    if(!res){ ev.target.value = ''; return; }
-    photoBlob = res.blob;
-    const p = $('#f-preview'); p.src = URL.createObjectURL(photoBlob); p.hidden = false;
-    $('#btn-photo').textContent = '📷 Retake photo';
-    status('');
-    readBill(photoBlob);
+    setPhoto(blob, note);
   }catch(e){ status('Could not read that photo. Try again.'); }
   ev.target.value = '';
 };
@@ -819,7 +858,7 @@ function resetForm(keepContext){
   F('rate').value = '';
   F('location').value = F('location').value || cfg.lastLocation;
   ocrRun++; clearOcrMarks();
-  photoBlob = null; $('#f-preview').hidden = true; $('#f-photo').value = '';
+  photoBlob = null; photoRaw = null; $('#photo-box').hidden = true; $('#f-photo').value = '';
   $('#btn-photo').textContent = '📷 Take bill photo';
   syncTypeFields(); refreshCalc();
 }

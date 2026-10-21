@@ -216,6 +216,8 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-open">Open Excel</button>
   </div>
   <div class="list" id="l-items"></div>
+  <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit to finance</button></p>
+  <p class="muted" id="submit-hint" hidden>Sends the claim Excel and a link to the bill photos by email from your account. The claim folder is then moved to “Submitted” and no longer shown here.</p>
 </section>
 
 <!-- SETTINGS -->
@@ -238,6 +240,14 @@ a{color:var(--brand)}
     <div>
       <label for="s-name">Your name (default for Names)</label>
       <input id="s-name" placeholder="Enter your name">
+    </div>
+    <div>
+      <label for="s-finance">Finance team email</label>
+      <input id="s-finance" type="email" inputmode="email" placeholder="Enter finance team email">
+    </div>
+    <div>
+      <label for="s-manager">Manager email (copied on submission)</label>
+      <input id="s-manager" type="email" inputmode="email" placeholder="Enter your manager’s email (optional)">
     </div>
     <div>
 
@@ -285,6 +295,8 @@ a{color:var(--brand)}
 <script>
 /* ---------- SET THIS ONCE: your Azure Application (client) ID, so colleagues don't need to enter it ---------- */
 const BUILT_IN_CLIENT_ID = '757ceeb7-c4d4-4f13-8823-25e8bc87dae7';
+/* ---------- SET THIS ONCE: finance team email that receives submitted claims (several: separate with ; ) ---------- */
+const BUILT_IN_FINANCE_EMAIL = '';
 
 /* ---------- helpers ---------- */
 const $ = s => document.querySelector(s);
@@ -292,7 +304,7 @@ const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); }catch{ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch{} }
 };
-const cfg = Object.assign({clientId:'', myName:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
+const cfg = Object.assign({clientId:'', myName:'', driveId:'', financeEmail:'', managerEmail:'', fuelRate:'', dieselRate:'', folderId:'', folderPath:'', projects:[], locations:['Kerala'], lastLocation:'Kerala'}, LS.get('cfg', {}));
 const saveCfg = () => LS.set('cfg', cfg);
 const isFuel = t => t === 'Fuel' || t === 'Petrol' || t === 'Diesel';
 const lastRate = f => f === 'Diesel' ? cfg.dieselRate : cfg.fuelRate;
@@ -310,7 +322,10 @@ function status(msg, sticky){
 }
 
 /* ---------- Microsoft sign-in + OneDrive (Graph) ---------- */
-const SCOPES = ['User.Read', 'Files.ReadWrite'];
+// Files.ReadWrite.All: needed to save into a folder someone else (e.g. finance) shared with you
+const SCOPES = ['User.Read', 'Files.ReadWrite.All'];
+const MAIL_SCOPES = ['User.Read', 'Files.ReadWrite.All', 'Mail.Send'];
+const D = (drive = cfg.driveId) => drive ? `/drives/${drive}/items` : '/me/drive/items';
 const GRAPH = 'https://graph.microsoft.com/v1.0';
 let pca = null, account = null;
 
@@ -326,14 +341,14 @@ async function initAuth(){
   account = (res && res.account) || pca.getAllAccounts()[0] || null;
   if(account) pca.setActiveAccount(account);
 }
-async function token(){
+async function token(scopes = SCOPES){
   if(!pca) throw new Error('Add the Microsoft app ID in Settings first.');
-  if(!account){ await pca.loginRedirect({scopes:SCOPES}); throw new Error('Opening Microsoft sign-in…'); }
-  try{ return (await pca.acquireTokenSilent({scopes:SCOPES, account})).accessToken; }
-  catch(e){ await pca.acquireTokenRedirect({scopes:SCOPES, account}); throw new Error('Opening Microsoft sign-in…'); }
+  if(!account){ await pca.loginRedirect({scopes}); throw new Error('Opening Microsoft sign-in…'); }
+  try{ return (await pca.acquireTokenSilent({scopes, account})).accessToken; }
+  catch(e){ await pca.acquireTokenRedirect({scopes, account}); throw new Error('Opening Microsoft sign-in… After signing in, tap the button again.'); }
 }
-async function g(path, opt = {}){
-  const t = await token();
+async function g(path, opt = {}, scopes){
+  const t = await token(scopes);
   const res = await fetch(GRAPH + path, {...opt, headers:{Authorization:'Bearer ' + t, ...(opt.headers || {})}});
   if(!res.ok){
     const err = new Error('OneDrive error ' + res.status);
@@ -344,26 +359,26 @@ async function g(path, opt = {}){
   return res;
 }
 const enc = s => encodeURIComponent(s);
-async function ensureFolder(parentId, name){
-  try{ return await (await g(`/me/drive/items/${parentId}:/${enc(name)}`)).json(); }
+async function ensureFolder(parentId, name, drive = cfg.driveId){
+  try{ return await (await g(`${D(drive)}/${parentId}:/${enc(name)}`)).json(); }
   catch(e){
     if(e.status !== 404) throw e;
-    return await (await g(`/me/drive/items/${parentId}/children`, {method:'POST', headers:{'Content-Type':'application/json'},
+    return await (await g(`${D(drive)}/${parentId}/children`, {method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name, folder:{}, '@microsoft.graph.conflictBehavior':'fail'})})).json();
   }
 }
 const putFile = async (fid, name, body, type) =>
-  (await g(`/me/drive/items/${fid}:/${enc(name)}:/content`, {method:'PUT', headers:{'Content-Type':type}, body})).json();
+  (await g(`${D()}/${fid}:/${enc(name)}:/content`, {method:'PUT', headers:{'Content-Type':type}, body})).json();
 async function getText(fid, name){
-  try{ return await (await g(`/me/drive/items/${fid}:/${enc(name)}:/content`)).text(); }
+  try{ return await (await g(`${D()}/${fid}:/${enc(name)}:/content`)).text(); }
   catch(e){ if(e.status === 404) return null; throw e; }
 }
 async function delFile(fid, name){
-  try{ await g(`/me/drive/items/${fid}:/${enc(name)}`, {method:'DELETE'}); }
+  try{ await g(`${D()}/${fid}:/${enc(name)}`, {method:'DELETE'}); }
   catch(e){ if(e.status !== 404) throw e; }
 }
 const renameFile = (fid, from, to) =>
-  g(`/me/drive/items/${fid}:/${enc(from)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:to})});
+  g(`${D()}/${fid}:/${enc(from)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:to})});
 
 /* ---------- month data (one folder + one Excel per month) ---------- */
 const months = {};
@@ -390,7 +405,7 @@ async function loadMonth(key){
 }
 async function saveJson(key){
   const m = months[key];
-  await putFile(m.folderId, 'claim-data.json', JSON.stringify({entries:m.entries, advance:m.advance}, null, 1), 'application/json');
+  await putFile(m.folderId, 'claim-data.json', JSON.stringify(Object.assign({entries:m.entries, advance:m.advance}, m.submitted ? {submitted:m.submitted} : {}), null, 1), 'application/json');
 }
 async function saveExcel(key){
   const m = months[key];
@@ -1022,6 +1037,7 @@ $('#btn-save').onclick = async () => {
 async function renderList(){
   const key = cfg.claimFolder;
   const box = $('#l-items');
+  $('#btn-submit').hidden = $('#submit-hint').hidden = true;
   if(!account || !cfg.folderId){ box.innerHTML = '<p class="empty">Sign in and choose a OneDrive folder in Settings to see your claims.</p>'; return; }
   box.innerHTML = '<p class="empty">Loading…</p>';
   try{
@@ -1035,7 +1051,8 @@ async function renderList(){
     $('#l-deadline').innerHTML = age > 10
       ? `<div class="note warn">Oldest expense (${dmy(oldest)}) is ${age} days old. Submit to HR with manager approval within 10 days of the expense.</div>`
       : oldest ? `<p class="muted">Submit by ${dmy(new Date(new Date(oldest).getTime() + 10*864e5).toISOString().slice(0,10))} (10 days from the oldest expense).</p>` : '';
-    if(!m.entries.length){ box.innerHTML = '<p class="empty">No claim lines for this month yet. Add one from the Add tab.</p>'; return; }
+    $('#btn-submit').hidden = $('#submit-hint').hidden = !m.entries.length;
+    if(!m.entries.length){ box.innerHTML = '<p class="empty">No claim lines in this claim folder yet. Add one from the Add tab.</p>'; return; }
     box.innerHTML = m.entries.map(e => {
       const late = Math.floor((new Date(todayISO()) - new Date(e.date)) / 864e5) > 10;
       const detail = isFuel(e.type) ? `${e.vehicle}, ${e.km} km @ ₹${e.fuelRate}` : (e.names || '');
@@ -1082,19 +1099,95 @@ $('#btn-open').onclick = async () => {
   const key = cfg.claimFolder;
   try{
     const m = await loadMonth(key);
-    if(!m.xlsxUrl){ const it = await (await g(`/me/drive/items/${m.folderId}:/${enc('Expense_Claim_' + key + '.xlsx')}`)).json(); m.xlsxUrl = it.webUrl; }
+    if(!m.xlsxUrl){ const it = await (await g(`${D()}/${m.folderId}:/${enc('Expense_Claim_' + key + '.xlsx')}`)).json(); m.xlsxUrl = it.webUrl; }
     window.open(m.xlsxUrl, '_blank');
   }catch(err){ status(err.status === 404 ? 'No Excel file for this month yet.' : err.message); }
+};
+
+/* ---------- submit a claim folder to the finance team ---------- */
+const SUBMITTED = 'Submitted';
+const blobToB64 = b => new Promise((ok, fail) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(',')[1]); r.onerror = fail; r.readAsDataURL(b); });
+const emails = t => (t || '').split(/[;,]/).map(x => x.trim()).filter(Boolean);
+let submitting = false;
+$('#btn-submit').onclick = async () => {
+  if(submitting) return;
+  const key = cfg.claimFolder;
+  const to = emails(cfg.financeEmail || BUILT_IN_FINANCE_EMAIL), cc = emails(cfg.managerEmail);
+  if(!key){ status('Choose a claim folder first.'); return; }
+  if(!to.length){ status('Enter the finance team email in Settings first.'); return; }
+  submitting = true; $('#btn-submit').disabled = true;
+  try{
+    const m = await loadMonth(key);
+    if(!m.entries.length){ status('There are no claim lines to submit.'); return; }
+    const total = r2(m.entries.reduce((x, e) => x + e.amount, 0)), adv = +m.advance || 0, bal = r2(total - adv);
+    const dates = m.entries.map(e => e.date).sort();
+    if(!confirm(`Submit “${key}” to the finance team?\n\n${m.entries.length} lines, ${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}\nTotal ${inr(total)} · Advance ${inr(adv)} · Balance ${inr(bal)}\n\nTo: ${to.join(', ')}${cc.length ? '\nCc: ' + cc.join(', ') : ''}\n\nAfter submitting, this claim folder moves to “${SUBMITTED}” in OneDrive and is no longer shown in the app.`)) return;
+
+    status('Updating the claim Excel…', true);
+    await renumber(m, key); await saveJson(key); await saveExcel(key);
+
+    status('Creating a link to the bills…', true);
+    let link = '';
+    try{
+      const r = await (await g(`${D()}/${m.folderId}/createLink`, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({type:'view', scope:'organization'})})).json();
+      link = r.link.webUrl;
+    }catch(e){ link = (await (await g(`${D()}/${m.folderId}`)).json()).webUrl; }
+
+    status('Sending the claim email…', true);
+    const name = cfg.myName || (account && account.name) || '';
+    const rowsHtml = m.entries.map(e => `<tr><td>${e.line}</td><td>${dmy(e.date)}</td><td>${esc(e.project)}</td><td>${esc(e.type)}</td><td>${esc(e.names)}</td><td style="text-align:right">${(+e.amount).toFixed(2)}</td><td>${e.photo ? 'Bill attached' : 'No bill'}${e.remarks ? ' – ' + esc(e.remarks) : ''}</td></tr>`).join('');
+    const td = 'style="border:1px solid #ccc;padding:4px 8px"';
+    const html = `<p>Dear Finance team,</p>
+<p>Please find my travel expense claim <b>${esc(key)}</b> for reimbursement.</p>
+<table style="border-collapse:collapse">
+<tr><td ${td}>Employee</td><td ${td}><b>${esc(name)}</b> (${esc(account.username)})</td></tr>
+<tr><td ${td}>Period</td><td ${td}>${dmy(dates[0])} to ${dmy(dates[dates.length - 1])}</td></tr>
+<tr><td ${td}>Lines</td><td ${td}>${m.entries.length}</td></tr>
+<tr><td ${td}>Total</td><td ${td}><b>${inr(total)}</b></td></tr>
+<tr><td ${td}>Advance</td><td ${td}>${inr(adv)}</td></tr>
+<tr><td ${td}>Balance to reimburse</td><td ${td}><b>${inr(bal)}</b></td></tr>
+</table>
+<p>Bill photos: <a href="${link}">open the claim folder in OneDrive</a>. The claim Excel is attached; each line also has a “View bill” link.</p>
+<table style="border-collapse:collapse;font-size:13px"><tr style="background:#2D2A6E;color:#fff"><th>Sl</th><th>Date</th><th>Project ID</th><th>Type</th><th>Names</th><th>Amount</th><th>Bill / Remarks</th></tr>${rowsHtml.replace(/<td/g, '<td ' + td)}</table>
+<p>${cc.length ? 'Manager copied for approval.' : ''}</p>
+<p>Regards,<br>${esc(name)}</p><p style="color:#888;font-size:12px">Sent from the Travel Claims app.</p>`;
+    const mail = { message: {
+        subject: `Travel claim – ${name} – ${key} – ${inr(bal)}`,
+        body: { contentType: 'HTML', content: html },
+        toRecipients: to.map(a => ({ emailAddress: { address: a } })),
+        ccRecipients: cc.map(a => ({ emailAddress: { address: a } })),
+        attachments: [{ '@odata.type': '#microsoft.graph.fileAttachment', name: `Expense_Claim_${key}.xlsx`,
+          contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', contentBytes: await blobToB64(buildXlsx(key, m)) }] },
+      saveToSentItems: true };
+    await g('/me/sendMail', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(mail)}, MAIL_SCOPES);
+
+    m.submitted = { at: new Date().toISOString(), to: to.join('; '), cc: cc.join('; '), total, advance: adv, balance: bal };
+    await saveJson(key);
+
+    status('Moving the folder to “' + SUBMITTED + '”…', true);
+    try{
+      const sub = await ensureFolder(cfg.folderId, SUBMITTED);
+      await g(`${D()}/${m.folderId}?@microsoft.graph.conflictBehavior=rename`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({parentReference:{id:sub.id}})});
+    }catch(e){ status('Claim sent, but the folder could not be moved: ' + e.message, true); }
+
+    delete months[key]; cfg.claimFolder = ''; saveCfg();
+    await loadClaimFolders(); renderList(); preloadMonth(); refreshCalc();
+    status(`✓ “${key}” submitted to finance (${inr(bal)}). A copy is in your Sent Items.`);
+  }catch(err){ status(err.message, true); setTimeout(() => status(''), 8000); }
+  finally{ submitting = false; $('#btn-submit').disabled = false; }
 };
 
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
   $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
+  $('#s-finance').value = cfg.financeEmail || BUILT_IN_FINANCE_EMAIL; $('#s-manager').value = cfg.managerEmail;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
   $('#btn-signin').hidden = !!account; $('#btn-signout').hidden = !account;
 }
 $('#s-client').addEventListener('change', async () => { cfg.clientId = $('#s-client').value.trim(); saveCfg(); await initAuth(); renderSettings(); });
+$('#s-finance').addEventListener('change', () => { cfg.financeEmail = $('#s-finance').value.trim(); saveCfg(); });
+$('#s-manager').addEventListener('change', () => { cfg.managerEmail = $('#s-manager').value.trim(); saveCfg(); });
 $('#s-name').addEventListener('change', () => { cfg.myName = $('#s-name').value.trim(); saveCfg(); if(!F('names').value) F('names').value = cfg.myName; });
 $('#btn-signin').onclick = async () => { try{ await token(); renderSettings(); }catch(e){ status(e.message); } };
 $('#btn-signout').onclick = async () => { if(pca && account){ await pca.logoutRedirect({account}); } };
@@ -1106,27 +1199,49 @@ async function pkRender(){
   $('#pk-up').disabled = pkStack.length < 2;
   const ul = $('#pk-list'); ul.innerHTML = '<li class="muted" style="padding:14px 16px">Loading…</li>';
   try{
-    const j = await (await g(`/me/drive/items/${cur.id}/children?$select=id,name,folder&$top=200`)).json();
-    const folders = j.value.filter(x => x.folder).sort((a, b) => a.name.localeCompare(b.name));
-    ul.innerHTML = folders.length ? folders.map(f => `<li><button data-id="${f.id}" data-name="${esc(f.name)}">📁 ${esc(f.name)}</button></li>`).join('')
+    let folders = [];
+    if(cur.id === 'shared'){
+      const j = await (await g('/me/drive/sharedWithMe?$top=200')).json();
+      folders = j.value.filter(x => x.remoteItem && x.remoteItem.folder)
+        .map(x => ({id: x.remoteItem.id, name: x.name, drive: x.remoteItem.parentReference.driveId}));
+    }else{
+      const j = await (await g(`${D(cur.drive)}/${cur.id}/children?$select=id,name,folder,remoteItem&$top=200`)).json();
+      folders = j.value.filter(x => x.folder || (x.remoteItem && x.remoteItem.folder)).map(x => x.remoteItem
+        ? {id: x.remoteItem.id, name: x.name, drive: x.remoteItem.parentReference.driveId}   // shortcut to a shared folder
+        : {id: x.id, name: x.name, drive: cur.drive || ''});
+    }
+    folders.sort((a, b) => a.name.localeCompare(b.name));
+    if(cur.id === 'root' && !cur.drive) folders.unshift({id: 'shared', name: 'Shared with me', drive: '', special: true});
+    ul.innerHTML = folders.length ? folders.map(f => `<li><button data-id="${f.id}" data-name="${esc(f.name)}" data-drive="${f.drive}">${f.special ? '👥' : f.drive && !cur.drive ? '🔗' : '📁'} ${esc(f.name)}</button></li>`).join('')
       : '<li class="muted" style="padding:14px 16px">No subfolders. Use this folder or create a new one.</li>';
+    $('#pk-pick').disabled = $('#pk-new').disabled = cur.id === 'shared';
   }catch(e){ ul.innerHTML = `<li class="note err">${esc(e.message)}</li>`; }
 }
 $('#btn-folder').onclick = async () => {
   try{ await token(); }catch(e){ status(e.message); return; }
   pkStack = [{id:'root', name:'OneDrive'}]; $('#picker').style.display = 'block'; pkRender();
 };
-$('#pk-list').onclick = ev => { const b = ev.target.closest('button'); if(!b) return; pkStack.push({id:b.dataset.id, name:b.dataset.name}); pkRender(); };
+$('#pk-list').onclick = ev => { const b = ev.target.closest('button'); if(!b) return; pkStack.push({id:b.dataset.id, name:b.dataset.name, drive:b.dataset.drive}); pkRender(); };
 $('#pk-up').onclick = () => { if(pkStack.length > 1){ pkStack.pop(); pkRender(); } };
 $('#pk-cancel').onclick = () => $('#picker').style.display = 'none';
 $('#pk-new').onclick = async () => {
   const name = prompt('New folder name', 'Travel Claims'); if(!name) return;
-  try{ const f = await ensureFolder(pkStack[pkStack.length - 1].id, name.trim()); pkStack.push({id:f.id, name:f.name}); pkRender(); }
+  const cur = pkStack[pkStack.length - 1];
+  try{ const f = await ensureFolder(cur.id, name.trim(), cur.drive || ''); pkStack.push({id:f.id, name:f.name, drive:cur.drive || ''}); pkRender(); }
   catch(e){ status(e.message); }
 };
-$('#pk-pick').onclick = () => {
+$('#pk-pick').onclick = async () => {
   const cur = pkStack[pkStack.length - 1];
-  cfg.folderId = cur.id; cfg.folderPath = pkStack.map(x => x.name).join(' › '); saveCfg();
+  if(cur.id === 'shared') return;
+  cfg.driveId = cur.drive || '';
+  cfg.folderId = cur.id; cfg.folderPath = pkStack.map(x => x.name).join(' › ');
+  if(cfg.driveId){
+    // shared folder (e.g. from finance): keep each employee's claims in their own subfolder
+    const mine = (cfg.myName || (account && account.name) || (account && account.username) || 'My claims').replace(/[\\/:*?"<>|#%]/g, '-').trim();
+    try{ const f = await ensureFolder(cur.id, mine); cfg.folderId = f.id; cfg.folderPath += ' › ' + f.name; }
+    catch(e){ status('Could not use this shared folder: ' + e.message); return; }
+  }
+  saveCfg();
   for(const k in months) delete months[k];
   $('#picker').style.display = 'none'; renderSettings(); status('Folder set: ' + cfg.folderPath); cfg.claimFolder = ''; saveCfg(); loadClaimFolders();
 };
@@ -1136,8 +1251,8 @@ async function loadClaimFolders(){
   const sels = document.querySelectorAll('.claimsel');
   if(!account || !cfg.folderId){ sels.forEach(x => x.innerHTML = '<option value="">Sign in and choose a main folder first</option>'); return; }
   try{
-    const j = await (await g(`/me/drive/items/${cfg.folderId}/children?$select=id,name,folder,createdDateTime&$top=200`)).json();
-    const names = j.value.filter(x => x.folder).sort((a, b) => b.createdDateTime.localeCompare(a.createdDateTime)).map(x => x.name);
+    const j = await (await g(`${D()}/${cfg.folderId}/children?$select=id,name,folder,createdDateTime&$top=200`)).json();
+    const names = j.value.filter(x => x.folder && x.name !== SUBMITTED).sort((a, b) => b.createdDateTime.localeCompare(a.createdDateTime)).map(x => x.name);
     if(cfg.claimFolder && !names.includes(cfg.claimFolder)) cfg.claimFolder = '';
     if(!cfg.claimFolder && names.length) cfg.claimFolder = names[0];
     saveCfg();

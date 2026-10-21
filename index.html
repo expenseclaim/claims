@@ -261,11 +261,6 @@ a{color:var(--brand)}
     <svg id="sc-svg"><polygon id="sc-poly"/></svg>
     <div class="sc-h"></div><div class="sc-h"></div><div class="sc-h"></div><div class="sc-h"></div>
   </div>
-  <div class="sc-modes">
-    <button type="button" data-scanmode="clean">Clean colour</button>
-    <button type="button" data-scanmode="bw">Black &amp; white</button>
-    <button type="button" data-scanmode="original">Original colour</button>
-  </div>
   <div class="sc-actions">
     <button type="button" class="sec" id="sc-cancel">Cancel</button>
     <button type="button" class="sec" id="sc-asis">Use as is</button>
@@ -550,34 +545,57 @@ function orderPts(p){
 }
 function defaultPts(w, h){ const m = 0.04; return [{x:w*m,y:h*m},{x:w*(1-m),y:h*m},{x:w*(1-m),y:h*(1-m)},{x:w*m,y:h*(1-m)}]; }
 function detectCorners(bmp){
+  // Finds the bill paper: tries edge outlines and the bright paper area, then keeps the
+  // 4-corner shape whose inside is clearly brighter than its surroundings (paper vs table).
   const s = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
   const c = document.createElement('canvas'); c.width = Math.round(bmp.width * s); c.height = Math.round(bmp.height * s);
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-  const src = cv.imread(c), gray = new cv.Mat(), edges = new cv.Mat(), contours = new cv.MatVector(), hier = new cv.Mat();
-  let best = null, bestArea = 0;
-  try{
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
-    cv.Canny(gray, edges, 40, 120);
-    const k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
-    cv.dilate(edges, edges, k); k.delete();
-    cv.findContours(edges, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-    const minArea = c.width * c.height * 0.12;
-    for(let i = 0; i < contours.size(); i++){
-      const cnt = contours.get(i), area = cv.contourArea(cnt);
-      if(area > minArea && area > bestArea){
-        const ap = new cv.Mat();
-        cv.approxPolyDP(cnt, ap, 0.02 * cv.arcLength(cnt, true), true);
-        if(ap.rows === 4 && cv.isContourConvex(ap)){
-          bestArea = area; best = [];
-          for(let j = 0; j < 4; j++) best.push({x: ap.data32S[j*2] / s, y: ap.data32S[j*2+1] / s});
+  const src = cv.imread(c), gray = new cv.Mat();
+  cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY); src.delete();
+  cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0);
+  const A = c.width * c.height, cands = [];
+  const rectPts = r => {
+    const a = r.angle * Math.PI / 180, cs = Math.cos(a) / 2, sn = Math.sin(a) / 2, w = r.size.width, h = r.size.height, cx = r.center.x, cy = r.center.y;
+    return [{x: cx - cs*w + sn*h, y: cy - sn*w - cs*h}, {x: cx + cs*w + sn*h, y: cy + sn*w - cs*h},
+            {x: cx + cs*w - sn*h, y: cy + sn*w + cs*h}, {x: cx - cs*w - sn*h, y: cy - sn*w + cs*h}];
+  };
+  const consider = (bin, allowRect) => {
+    const cs = new cv.MatVector(), hi = new cv.Mat();
+    cv.findContours(bin, cs, hi, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    for(let i = 0; i < cs.size(); i++){
+      const cnt = cs.get(i), area = cv.contourArea(cnt);
+      if(area > A * 0.08 && area < A * 0.97){
+        let q = null; const peri = cv.arcLength(cnt, true);
+        for(const eps of [0.02, 0.03, 0.05, 0.08]){
+          const ap = new cv.Mat(); cv.approxPolyDP(cnt, ap, eps * peri, true);
+          if(ap.rows === 4 && cv.isContourConvex(ap)){ q = []; for(let j = 0; j < 4; j++) q.push({x: ap.data32S[j*2], y: ap.data32S[j*2+1]}); }
+          ap.delete(); if(q) break;
         }
-        ap.delete();
+        if(!q && allowRect) q = rectPts(cv.minAreaRect(cnt));
+        if(q) cands.push(q);
       }
       cnt.delete();
     }
-  }finally{ src.delete(); gray.delete(); edges.delete(); contours.delete(); hier.delete(); }
-  return best ? {pts: orderPts(best), auto: true} : {pts: defaultPts(bmp.width, bmp.height), auto: false};
+    cs.delete(); hi.delete();
+  };
+  const k5 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5, 5));
+  const edges = new cv.Mat(); cv.Canny(gray, edges, 40, 120); cv.dilate(edges, edges, k5); consider(edges, false); edges.delete(); k5.delete();
+  const th = new cv.Mat(), k15 = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
+  cv.threshold(gray, th, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU); cv.morphologyEx(th, th, cv.MORPH_CLOSE, k15);
+  consider(th, true); th.delete(); k15.delete();
+  let best = null, bestScore = 15;
+  for(const q of cands){
+    const mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1), inv = new cv.Mat();
+    const pm = cv.matFromArray(4, 1, cv.CV_32SC2, q.flatMap(p => [Math.round(p.x), Math.round(p.y)]));
+    const pv = new cv.MatVector(); pv.push_back(pm);
+    cv.fillPoly(mask, pv, new cv.Scalar(255)); cv.bitwise_not(mask, inv);
+    const score = cv.mean(gray, mask)[0] - cv.mean(gray, inv)[0];
+    if(score > bestScore){ bestScore = score; best = q; }
+    mask.delete(); inv.delete(); pm.delete(); pv.delete();
+  }
+  gray.delete();
+  return best ? {pts: orderPts(best.map(p => ({x: Math.min(bmp.width, Math.max(0, p.x / s)), y: Math.min(bmp.height, Math.max(0, p.y / s))}))), auto: true}
+              : {pts: defaultPts(bmp.width, bmp.height), auto: false};
 }
 function removeShadow(g){
   const bg = new cv.Mat(), k = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9));
@@ -653,14 +671,14 @@ function openScanner(blob){
     });
     const setMode = m => { cfg.scanMode = m; saveCfg(); document.querySelectorAll('[data-scanmode]').forEach(b => b.setAttribute('aria-pressed', b.dataset.scanmode === m)); };
     document.querySelectorAll('[data-scanmode]').forEach(b => b.onclick = () => setMode(b.dataset.scanmode));
-    setMode(cfg.scanMode || 'clean');
+    
     const finish = val => { ov.hidden = true; document.body.style.overflow = ''; bmp.close && bmp.close(); resolve(val); };
     $('#sc-cancel').onclick = () => { if(!busy) finish(null); };
     $('#sc-asis').onclick = () => { if(!busy) finish({blob}); };
     $('#sc-done').onclick = async () => {
-      if(busy) return; busy = true; $('#sc-done').disabled = true; hint.textContent = 'Flattening and cleaning…';
+      if(busy) return; busy = true; $('#sc-done').disabled = true; hint.textContent = 'Cropping and straightening…';
       await new Promise(r => setTimeout(r, 50));
-      try{ finish({blob: await warpAndClean(bmp, orderPts(pts), cfg.scanMode || 'clean')}); }
+      try{ finish({blob: await warpAndClean(bmp, orderPts(pts), 'original')}); }
       catch(e){ busy = false; $('#sc-done').disabled = false; hint.textContent = 'Could not process this photo. Tap “Use as is” instead.'; }
     };
     try{
@@ -680,8 +698,8 @@ async function autoScan(raw){
   const bmp = await createImageBitmap(raw);
   try{
     const det = detectCorners(bmp);
-    const pts = det.auto ? det.pts : [{x:0,y:0},{x:bmp.width,y:0},{x:bmp.width,y:bmp.height},{x:0,y:bmp.height}];
-    return {blob: await warpAndClean(bmp, pts, cfg.scanMode || 'clean'), auto: det.auto};
+    if(!det.auto) return {blob: raw, auto: false};
+    return {blob: await warpAndClean(bmp, det.pts, 'original'), auto: true};
   }finally{ bmp.close && bmp.close(); }
 }
 function setPhoto(blob, note){
@@ -696,22 +714,22 @@ function setPhoto(blob, note){
 $('#btn-adjust').onclick = async () => {
   if(!photoRaw) return;
   const r = await openScanner(photoRaw);
-  if(r) setPhoto(r.blob, r.blob === photoRaw ? 'Original photo kept.' : '✓ Edges adjusted and cleaned.');
+  if(r) setPhoto(r.blob, r.blob === photoRaw ? 'Original photo kept.' : '✓ Edges adjusted and cropped.');
 };
-$('#btn-original').onclick = () => { if(photoRaw) setPhoto(photoRaw, 'Original photo kept (not cleaned).'); };
+$('#btn-original').onclick = () => { if(photoRaw) setPhoto(photoRaw, 'Original photo kept (not cropped).'); };
 const onPicked = async ev => {
   const f = ev.target.files[0]; if(!f) return;
   status('Preparing photo…', true);
   try{
     const raw = await compress(f);
     photoRaw = raw;
-    status(cfg.prepDone ? 'Cropping and cleaning the bill…' : 'Cropping and cleaning the bill… (first time takes longer)', true);
+    status(cfg.prepDone ? 'Cropping the bill…' : 'Cropping the bill… (first time takes longer)', true);
     let blob = raw, note;
     try{
       const r = await autoScan(raw);
       blob = r.blob;
-      note = r.auto ? '✓ Bill cropped, flattened and cleaned automatically.'
-                    : 'Couldn’t find the bill edges, so it was cleaned without cropping. Tap “Adjust edges” to crop it.';
+      note = r.auto ? '✓ Bill cropped to the paper and straightened automatically.'
+                    : 'Couldn’t find the bill edges, so the full photo is kept. Tap “Adjust edges” to crop it.';
     }catch(e){ note = 'Scanner not available right now, so the original photo is kept.'; }
     status('');
     setPhoto(blob, note);
@@ -748,14 +766,18 @@ function parseBillDate(text){
   return found.length ? found[0].iso : null;
 }
 function parseBillAmount(text){
+  const noDates = t => t.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ').replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ');
+  const fixLine = l => noDates(l)
+    .replace(/(\d)\s*[,.]\s*(\d{2})(?![\d,])/g, '$1.$2')   // "421,00" / "421 . 00" → 421.00 (comma misread as decimal point)
+    .replace(/(\d)\s+00\b/g, '$1.00')                      // "421 00" → 421.00 (dot not seen)
+    .replace(/(\d)\s*,\s*(\d{3})/g, '$1,$2');
   const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean);
-  const nums = l => {
-    const clean = l.replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, ' ')      // dates
-                   .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, ' ')                     // times
-                   .replace(/(\d)\s*,\s*(\d{2,3})/g, '$1,$2').replace(/(\d)\s+\.\s*(\d{2})\b/g, '$1.$2');
-    return (clean.match(/\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g) || [])
-      .map(n => +n.replace(/,/g, '')).filter(n => n > 0 && n < 200000);
-  };
+  // Does this bill write amounts with paise (e.g. 120.00)? If so, a long whole number ending in 00
+  // with no point (e.g. 42100) is almost certainly 421.00 with the dot missed.
+  const decimalBill = lines.some(l => /\d\.\d{2}(?!\d)/.test(fixLine(l)));
+  const nums = l => (fixLine(l).match(/\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?/g) || [])
+    .map(n => { let v = +n.replace(/,/g, ''); if(decimalBill && !/[.,]/.test(n) && n.length >= 4 && n.endsWith('00')) v = v / 100; return v; })
+    .filter(n => n > 0 && n < 200000);
   const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due|received)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*[₹%]/i;
   const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b/i;
   const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|no)|items?\s*:|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due/i;
@@ -777,7 +799,7 @@ function parseBillAmount(text){
   }
   if(v == null){
     const dec = [];
-    lines.forEach(l => { if(!skip.test(l)) (l.match(/\b\d{1,6}\.\d{2}\b/g) || []).forEach(n => dec.push(+n)); });
+    lines.forEach(l => { if(!skip.test(l)) (fixLine(l).match(/\b\d{1,6}\.\d{2}\b/g) || []).forEach(n => dec.push(+n)); });
     if(dec.length) v = Math.max(...dec);
   }
   return v == null ? null : Math.round(v * 100) / 100;
@@ -799,6 +821,15 @@ function loadTesseract(){
   });
 }
 function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; }
+async function ocrImage(blob){
+  // enlarge small bills and use greyscale with extra contrast, so decimal points are not lost
+  const bmp = await createImageBitmap(blob);
+  const k = Math.min(2.5, Math.max(1, 2200 / Math.max(bmp.width, bmp.height)));
+  const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  const x = c.getContext('2d'); x.filter = 'grayscale(1) contrast(1.4)'; x.imageSmoothingQuality = 'high';
+  x.drawImage(bmp, 0, 0, c.width, c.height); bmp.close && bmp.close();
+  return c;
+}
 async function readBill(blob){
   const run = ++ocrRun;
   const startDate = F('date').value, startBill = F('bill').value;
@@ -807,7 +838,7 @@ async function readBill(blob){
   note.textContent = 'Reading the bill… (first time takes longer). You can keep filling the form.';
   try{
     const worker = await getOcrWorker();
-    const { data } = await worker.recognize(blob);
+    const { data } = await worker.recognize(await ocrImage(blob));
     if(run !== ocrRun) return;                       // a newer photo was taken
     const d = parseBillDate(data.text);
     const a = isFuel(F('type').value) ? null : parseBillAmount(data.text);

@@ -46,6 +46,17 @@ html.large body{zoom:1.15} html.xl body{zoom:1.3}
 .sumbox th,.sumbox td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
 .sumbox td.n,.sumbox th.n{text-align:right;font-variant-numeric:tabular-nums}
 .sumbox td:first-child{white-space:nowrap}
+.chk{display:flex;align-items:center;gap:10px;font-weight:700;margin-top:14px}
+.chk input{width:22px;height:22px}
+.split-row{display:grid;grid-template-columns:minmax(0,1fr) 5.6em 3.2em;gap:6px;margin-top:10px;padding-top:8px;border-top:1px solid var(--line)}
+.split-row .sp-proj{grid-column:1/2}
+.split-row .sp-amt{grid-column:2/4}
+.split-row small{grid-column:1/-1;color:var(--muted);margin-bottom:-2px}
+.split-row input{padding:9px 8px;font-size:15px}
+.split-row button{padding:6px 10px}
+#split-box{background:var(--surface);border:1.5px dashed var(--line);border-radius:10px;padding:10px 12px;margin-top:8px}
+#split-box .row button{width:100%;padding:9px 6px;font-size:14px}
+#split-mine{margin:10px 0 0;font-weight:700;color:var(--brand)}
 .food-figs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0 4px;text-align:center}
 .food-figs div{background:var(--bg);border-radius:8px;padding:8px 4px}
 .food-figs b{display:block;font-size:18px}
@@ -179,7 +190,8 @@ a{color:var(--brand)}
       </select></div>
   </div>
   <label for="f-project">Project ID</label>
-  <input id="f-project" list="dl-project" autocomplete="off" placeholder="Enter project ID">
+  <div class="claimbar"><input id="f-project" list="dl-project" autocomplete="off" placeholder="Enter project ID">
+    <button class="ghost" id="btn-proj-add" type="button" title="Add another project (shared bill)" aria-label="Add another project" style="font-size:22px;padding:6px 16px">＋</button></div>
   <datalist id="dl-project"></datalist>
 
   <div class="row">
@@ -212,6 +224,18 @@ a{color:var(--brand)}
   <div id="grp-bill">
     <label for="f-bill">Bill amount (₹)</label>
     <input type="number" id="f-bill" step="0.01" inputmode="decimal" placeholder="Enter bill amount">
+    <div id="grp-split">
+      <label class="chk"><input type="checkbox" id="f-split"> Shared bill: split with another project</label>
+      <div id="split-box" hidden>
+        <div class="muted" style="font-size:13px">People from <b>other projects</b>. People from your own project stay in Names above.</div>
+        <div id="split-rows"></div>
+        <div class="row" style="margin-top:8px">
+          <button class="ghost" id="btn-split-add" type="button">+ Add project</button>
+          <button class="ghost" id="btn-split-eq" type="button">Split equally</button>
+        </div>
+        <p id="split-mine"></p>
+      </div>
+    </div>
   </div>
 
   <label for="f-remarks">Remarks</label>
@@ -543,31 +567,48 @@ function calc(e, monthEntries){
     out.warn.push('Fuel allowance is for travel within the district of operation. Outstation travel is reimbursed on actual bills.');
     return out;
   }
-  const bill = +e.bill || 0;
+  const shares = (e.splits || []).reduce((s, x) => s + (+x.amount || 0), 0);
+  const bill = r2((+e.bill || 0) - shares);                                  // your own share when the bill is split
   if(e.type === 'Food'){
-    const outside = e.scope === 'outside';
-    const dayCap = outside ? 700 : 500;
-    const usedPP = monthEntries.filter(x => x.type === 'Food' && x.date === e.date)
-      .reduce((s, x) => s + x.amount / Math.max(1, +x.pax || 1), 0);
-    const dayPP = r2(usedPP + bill / pax);
-    out.amount = r2(bill);
-    out.note = `Food limit: ₹${dayCap}/day per person · this day’s food so far incl. this bill: ₹${dayPP}/person`;
-    if(dayPP > dayCap) out.warn.push(`Food for this day is ₹${dayPP}/person, ₹${r2(dayPP - dayCap)} over the ₹${dayCap}/day limit. The full bill amount will still be claimed.`);
+    const cap = e.scope === 'outside' ? 700 : 500;
+    const used = personDay(monthEntries.filter(x => x.type === 'Food' && x.date === e.date && !(editing && x.saved === editing.saved)));
+    const add = personDay([{ names: e.names, pax: e.pax, amount: bill }, ...(e.splits || [])]);
+    const over = Object.entries(add).map(([p, v]) => [p, r2((used[p] || 0) + v)]).filter(([, t]) => t > cap + 0.005);
+    out.amount = bill;
+    out.note = `Food limit: ₹${cap}/day per person` + (Object.keys(add).length > 1 ? ` · ${Object.keys(add).length} persons` : '');
+    if(over.length) out.warn.push(`Food for ${dmy(e.date)} is over the ₹${cap}/day limit: ${over.map(([p, t]) => `${p} ₹${t} (₹${r2(t - cap)} over)`).join('; ')}. The full amount will still be claimed.`);
     return out;
   }
-  out.amount = r2(bill);
+  out.amount = bill;
   out.note = e.type === 'Room Rent' ? 'Actuals – only when the company could not arrange accommodation' : 'Actuals as per bill';
   return out;
 }
+
+// people on a line: names from the Names field, topped up to No of pax ("Person 2" …)
+const namesOf = t => (t || '').split(/,|&|\band\b/i).map(x => x.trim()).filter(Boolean);
+function personsOf(x){
+  const n = namesOf(x.names).filter(v => !/^\d+\s*persons?$/i.test(v)); const k = Math.max(n.length, +x.pax || 1);
+  for(let i = n.length; i < k; i++) n.push(`Person ${i + 1} (${x.project || 'no project'})`);
+  return n;
+}
+// amount per person for a set of lines (each line shared equally between its people)
+function personDay(lines){ const o = {}; lines.forEach(x => { const ps = personsOf(x), sh = (+x.amount || 0) / ps.length; ps.forEach(p => o[p] = r2((o[p] || 0) + sh)); }); return o; }
 
 /* ---------- Excel builder (layout matches your sheet) ---------- */
 function buildXlsx(key, m){
   const H = ['Sl. No','Date','Project ID','Expense Type','Location','Vehicle Type','Current Fuel Rate','Running Km','No of Pax','Names','Claim Amount (Final)','Remarks','Bill Image'];
   const rows = [H];
+  const billOf = e => e.photo ? e : (e.group ? m.entries.find(x => x.group === e.group && x.groupMain && x.photo) : null);
   m.entries.forEach(e => {
-    const fuel = isFuel(e.type);
+    const fuel = isFuel(e.type), b = billOf(e);
+    let rem = e.remarks || '';
+    if(e.group){
+      const main = m.entries.find(x => x.group === e.group && x.groupMain);
+      rem = [`Shared bill ${inr(e.groupTotal)}` + (e.groupMain ? ' – own share' : ` – share of ${e.names}` + (main ? ` (bill on line ${main.line})` : '')), rem].filter(Boolean).join(' – ');
+    }
+    if(!b) rem = [rem, 'No bill'].filter(Boolean).join(' – ');
     rows.push([e.line, dmy(e.date), e.project, typeLabel(e.type), e.location, fuel ? e.vehicle : '', fuel ? +e.fuelRate : '', fuel ? +e.km : '',
-      +e.pax || '', e.names, e.amount, e.photo ? (e.remarks || '') : [e.remarks, 'No bill'].filter(Boolean).join(' – '), e.photo ? 'View bill' : '']);
+      +e.pax || '', e.names, e.amount, rem, b ? 'View bill' : '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const n = m.entries.length;
@@ -596,13 +637,14 @@ function buildXlsx(key, m){
       const cell = ws[A(r,c)] || (ws[A(r,c)] = {t:'s', v:''});
       const s = {border, alignment:{vertical:'center', horizontal: c === 0 ? 'center' : undefined}};
       if(c === 6 || c === 10) s.numFmt = money;
-      if(c === 10 && e.photo) s.fill = {fgColor:{rgb:'92D050'}};
+      if(c === 10 && billOf(e)) s.fill = {fgColor:{rgb:'92D050'}};
       if((c === 5 || c === 6 || c === 7) && !isFuel(e.type)) s.fill = {fgColor:{rgb:'D9D9D9'}};
       cell.s = s;
     }
-    if(e.photo){
+    const bb = billOf(e);
+    if(bb){
       const lc = ws[A(r,12)];
-      lc.l = {Target:e.photoUrl || e.photo, Tooltip:'Open bill photo ' + e.photo};
+      lc.l = {Target:bb.photoUrl || bb.photo, Tooltip:'Open bill ' + bb.photo};
       lc.s = {border, font:{color:{rgb:'0563C1'}, underline:true}, alignment:{horizontal:'center', vertical:'center'}};
     }
   });
@@ -1124,7 +1166,7 @@ function formEntry(){
   return {date:F('date').value, project:F('project').value.trim(), type:F('type').value === 'Fuel' ? F('fuel').value : F('type').value, location:F('location').value.trim(),
     scope:F('scope').value, meals:+F('meals').value || 1, vehicle:F('vehicle').value, fuelRate:+F('rate').value || 0,
     km:+F('km').value || 0, pax:+F('pax').value || 1, names:F('names').value.trim(), bill:+F('bill').value || 0,
-    remarks:F('remarks').value.trim()};
+    remarks:F('remarks').value.trim(), splits: splitList()};
 }
 function syncTypeFields(){
   const t = F('type').value;
@@ -1154,7 +1196,7 @@ function resetForm(keepContext){
   F('names').value = F('names').value || cfg.myName;
   F('rate').value = '';
   F('location').value = F('location').value || cfg.lastLocation;
-  ocrRun++; clearOcrMarks(); typeTouched = false; $('#type-sug').hidden = true; F('type').classList.remove('ocr');
+  ocrRun++; clearOcrMarks(); if(typeof clearSplit === 'function') clearSplit(); typeTouched = false; $('#type-sug').hidden = true; F('type').classList.remove('ocr');
   photoBlob = null; photoRaw = null; $('#photo-box').hidden = true; $('#f-photo').value = '';
   $('#btn-photo').textContent = '📷 Take photo'; $('#btn-adjust').hidden = false;
   syncTypeFields(); refreshCalc();
@@ -1178,6 +1220,10 @@ $('#btn-save').onclick = async () => {
   if(!e.project) missing.push('Project ID');
   if(isFuel(e.type) && (!e.fuelRate || !e.km)) missing.push('fuel price and km');
   if(!isFuel(e.type) && !e.bill) missing.push('bill amount');
+  if(e.splits.length){
+    if(e.splits.some(x => !x.project || !(x.amount > 0))) missing.push('Project ID and share for each other project');
+    else if(e.splits.reduce((s, x) => s + x.amount, 0) >= e.bill) missing.push('shares smaller than the bill amount');
+  }
   if(missing.length){ status('Fill in ' + missing.join(', ') + '.'); return; }
   if(!isFuel(e.type) && !photoBlob && !(editing && editing.hadPhoto) && !confirm('No bill attached. Save this line without a bill (e.g. a cash auto fare)?')) return;
   const key = editing ? editing.key : cfg.claimFolder;
@@ -1238,10 +1284,16 @@ async function saveLine(key, e, blob, show){
     photo = line + (isPdf ? '.pdf' : '.jpg'); say('Uploading bill ' + photo + '…');
     photoUrl = (await putFile(m.folderId, photo, blob, isPdf ? 'application/pdf' : 'image/jpeg')).webUrl;
   }
+  const splits = isFuel(e.type) ? [] : (e.splits || []);
+  const gid = splits.length ? 'g' + Date.now().toString(36) : '';
   const entry = {line, date:e.date, project:e.project, type:e.type, location:e.location, vehicle:e.vehicle, fuelRate:e.fuelRate,
-    km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:isFuel(e.type) ? null : e.bill,
+    km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:isFuel(e.type) ? null : (gid ? c.amount : e.bill),
     amount:c.amount, remarks:e.remarks, photo, photoUrl, photoHash:e.photoHash || '', saved:new Date().toISOString()};
+  if(gid) Object.assign(entry, { group: gid, groupTotal: r2(e.bill), groupMain: true });
   m.entries.push(entry);
+  splits.forEach((sp, i) => m.entries.push({ line: 0, date: e.date, project: sp.project, type: e.type, location: e.location, vehicle: '', fuelRate: 0, km: 0,
+    pax: sp.pax, names: sp.names || `${sp.pax} person${sp.pax > 1 ? 's' : ''}`, scope: e.scope, bill: r2(sp.amount), amount: r2(sp.amount), remarks: e.remarks, photo: '', photoUrl: '', photoHash: '',
+    group: gid, groupTotal: r2(e.bill), groupMain: false, saved: new Date(Date.now() + i + 1).toISOString() }));
   say('Saving…');
   try{ await renumber(m, key); await saveJson(key); }
   catch(err){ delete months[key]; throw err; }
@@ -1323,8 +1375,8 @@ async function renderList(){
         <div class="no">${e.line}</div>
         <div><div class="what">${esc(typeLabel(e.type))}${late ? '<span class="tag">previous month</span>' : ''}</div>
           <div class="meta">${dmy(e.date)} · ${esc(e.project)}</div>
-          <div class="meta">${esc(detail)}${e.remarks ? ' · ' + esc(e.remarks) : ''}${e.photo ? '' : ' · No bill'}</div></div>
-        <div><div class="amt ${e.photo ? 'has-bill' : ''}">${inr(e.amount)}</div>
+          <div class="meta">${esc(detail)}${e.remarks ? ' · ' + esc(e.remarks) : ''}${e.group ? ' · 🤝 shared bill ' + inr(e.groupTotal) : ''}${e.photo || e.group ? '' : ' · No bill'}</div></div>
+        <div><div class="amt ${e.photo || e.group ? 'has-bill' : ''}">${inr(e.amount)}</div>
           <div class="act"><button class="edit" data-edit="${e.line}">Edit</button><button class="danger" data-del="${e.line}">Delete</button></div></div>
       </div>`;
     }).join('');
@@ -1335,11 +1387,12 @@ $('#l-items').addEventListener('click', async ev => {
   if(ev.target.dataset.edit){ startEdit(+ev.target.dataset.edit); return; }
   const line = +ev.target.dataset.del; if(!line) return;
   const key = cfg.claimFolder, m = months[key], e = m.entries[line - 1];
-  if(!confirm(`Delete line ${line} (${typeLabel(e.type)}, ${inr(e.amount)})? Later lines and their photos will be renumbered.`)) return;
+  const mates = e.group && e.groupMain ? m.entries.filter(x => x.group === e.group && x !== e) : [];
+  if(!confirm(`Delete line ${line} (${typeLabel(e.type)}, ${inr(e.amount)})?` + (mates.length ? `\n\nThis bill is shared: line${mates.length > 1 ? 's' : ''} ${mates.map(x => x.line).join(', ')} will be deleted too.` : '') + `\n\nLater lines and their photos will be renumbered.`)) return;
   try{
     status('Deleting…', true);
     if(e.photo) await delFile(m.folderId, e.photo);
-    m.entries.splice(line - 1, 1);
+    m.entries = m.entries.filter(x => x !== e && !mates.includes(x));
     await renumber(m, key);
     await saveJson(key); await saveExcel(key);
     status('Deleted line ' + line); renderList();
@@ -1671,14 +1724,15 @@ function startEdit(line){
   F('bill').value = x.bill != null ? x.bill : ''; F('remarks').value = x.remarks || '';
   typeTouched = true;
   $('#edit-text').innerHTML = `✏️ Editing line ${x.line} of “${esc(key)}”. ${x.photo ? 'Its bill is kept unless you add a new one.' : ''}`;
-  $('#edit-bar').hidden = false; $('#btn-save').textContent = `Update line ${x.line}`;
+  $('#edit-bar').hidden = false; $('#btn-save').textContent = `Update line ${x.line}`; $('#grp-split').hidden = true; $('#btn-proj-add').hidden = true;
+  if(x.group) $('#edit-text').innerHTML += ` This is one share of a shared bill (${inr(x.groupTotal)}); other shares are not changed.`;
   document.querySelectorAll('.claimsel').forEach(sel => sel.disabled = true);
   syncTypeFields(); refreshCalc();
   document.querySelector('nav button[data-tab="add"]').click();
   window.scrollTo(0, 0);
 }
 function endEdit(){
-  editing = null; $('#edit-bar').hidden = true; $('#btn-save').textContent = 'Save claim line';
+  editing = null; $('#edit-bar').hidden = true; $('#btn-save').textContent = 'Save claim line'; $('#grp-split').hidden = false; $('#btn-proj-add').hidden = false;
   document.querySelectorAll('.claimsel').forEach(sel => sel.disabled = false);
 }
 $('#btn-edit-cancel').onclick = () => { endEdit(); resetForm(true); };
@@ -1709,12 +1763,13 @@ async function updateLine(ed, e, blob){
 function claimSummary(m){
   const by = (f) => { const o = {}; m.entries.forEach(e => { const k = f(e); (o[k] = o[k] || { lines: 0, total: 0 }); o[k].lines++; o[k].total = r2(o[k].total + e.amount); }); return o; };
   const projects = by(e => e.project || '(no project)'), types = by(e => typeLabel(e.type));
-  const days = {};
+  const pd = {};
   m.entries.filter(e => e.type === 'Food').forEach(e => {
-    const d = days[e.date] = days[e.date] || { date: e.date, pax: 1, outside: false, claimed: 0 };
-    d.pax = Math.max(d.pax, +e.pax || 1); d.outside = d.outside || e.scope === 'outside'; d.claimed = r2(d.claimed + e.amount);
+    const ps = personsOf(e), sh = e.amount / ps.length;
+    ps.forEach(p => { const d = pd[e.date + '|' + p] = pd[e.date + '|' + p] || { date: e.date, person: p, outside: false, claimed: 0 };
+      d.outside = d.outside || e.scope === 'outside'; d.claimed = r2(d.claimed + sh); });
   });
-  const food = Object.values(days).sort((a, b) => a.date.localeCompare(b.date)).map(d => Object.assign(d, { limit: (d.outside ? 700 : 500) * d.pax }));
+  const food = Object.values(pd).sort((a, b) => a.date.localeCompare(b.date) || a.person.localeCompare(b.person)).map(d => Object.assign(d, { limit: d.outside ? 700 : 500 }));
   const claimable = food.reduce((s, d) => s + d.limit, 0), claimed = r2(food.reduce((s, d) => s + d.claimed, 0));
   return { projects, types, food, claimable, claimed, diff: r2(claimed - claimable) };
 }
@@ -1725,10 +1780,10 @@ function summaryHtml(m){
   if(S.food.length){
     const over = S.diff > 0;
     h += `<div class="sumbox"><h3>🍽️ Food check</h3>
-      <div class="food-figs"><div><b>${S.food.length}</b>day${S.food.length > 1 ? 's' : ''}</div><div><b>${inr(S.claimable)}</b>claimable</div><div><b>${inr(S.claimed)}</b>claimed</div></div>
-      <div class="note ${over ? 'err' : 'ok'}">${over ? `${inr(S.diff)} over the food limit for ${S.food.length} day${S.food.length > 1 ? 's' : ''}.` : `Within the food limit: ${inr(-S.diff)} below the claimable amount.`}</div>
-      <table><tr><th>Date</th><th>Area</th><th class="n">Persons</th><th class="n">Limit</th><th class="n">Claimed</th></tr>
-      ${S.food.map(d => `<tr><td>${dmy(d.date)}</td><td>${d.outside ? 'Outside' : 'Kerala'}</td><td class="n">${d.pax}</td><td class="n">${inr(d.limit)}</td><td class="n" style="${d.claimed > d.limit ? 'color:var(--err);font-weight:700' : ''}">${inr(d.claimed)}</td></tr>`).join('')}</table></div>`;
+      <div class="food-figs"><div><b>${S.food.length}</b>person-day${S.food.length > 1 ? 's' : ''}</div><div><b>${inr(S.claimable)}</b>claimable</div><div><b>${inr(S.claimed)}</b>claimed</div></div>
+      <div class="note ${over ? 'err' : 'ok'}">${over ? `${inr(S.diff)} over the food limit in total.` : `Within the food limit: ${inr(-S.diff)} below the claimable amount.`}${S.food.some(d => d.claimed > d.limit) && !over ? ' Some days are over; see the red amounts.' : ''}</div>
+      <table><tr><th>Date</th><th>Person</th><th>Area</th><th class="n">Limit</th><th class="n">Claimed</th></tr>
+      ${S.food.map(d => `<tr><td>${dmy(d.date)}</td><td>${esc(d.person)}</td><td>${d.outside ? 'Outside' : 'Kerala'}</td><td class="n">${inr(d.limit)}</td><td class="n" style="${d.claimed > d.limit ? 'color:var(--err);font-weight:700' : ''}">${inr(d.claimed)}</td></tr>`).join('')}</table></div>`;
   }
   const tbl = (title, o) => `<div class="sumbox"><h3>${title}</h3><table><tr><th>${title.includes('Project') ? 'Project ID' : 'Expense type'}</th><th class="n">Lines</th><th class="n">Amount</th></tr>
     ${Object.entries(o).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.lines}</td><td class="n">${inr(v.total)}</td></tr>`).join('')}</table></div>`;
@@ -1755,12 +1810,12 @@ function summarySheet(key, m){
   put([]);
   put(['Food check (policy: ₹500 per person per day in Kerala and nearby districts, ₹700 outside the state)'], [sect]);
   if(S.food.length){
-    put(['Date', 'Area', 'Persons', 'Claimable', 'Claimed', 'Difference'], [head, head, head, head, head, head]);
+    put(['Date', 'Person', 'Area', 'Claimable', 'Claimed', 'Difference'], [head, head, head, head, head, head]);
     S.food.forEach(d => { const df = r2(d.claimed - d.limit);
-      put([dmy(d.date), d.outside ? 'Outside state' : 'Kerala / nearby', d.pax, d.limit, d.claimed, df],
+      put([dmy(d.date), d.person, d.outside ? 'Outside state' : 'Kerala / nearby', d.limit, d.claimed, df],
         [{ border }, { border }, { border }, { border, numFmt: money }, { border, numFmt: money }, { border, numFmt: money, font: { bold: true, color: { rgb: df > 0 ? 'B3261E' : '1B7F3A' } } }]); });
     const b = { border, font: { bold: true } };
-    put([`Total: ${S.food.length} day${S.food.length > 1 ? 's' : ''}`, '', '', S.claimable, S.claimed, S.diff],
+    put([`Total: ${S.food.length} person-day${S.food.length > 1 ? 's' : ''}`, '', '', S.claimable, S.claimed, S.diff],
       [b, b, b, Object.assign({ numFmt: money }, b), Object.assign({ numFmt: money }, b), { border, numFmt: money, font: { bold: true, color: { rgb: S.diff > 0 ? 'B3261E' : '1B7F3A' } } }]);
     put([S.diff > 0 ? `Result: claimed ${inr(S.diff)} more than the food limit.` : `Result: within the food limit (${inr(-S.diff)} below).`],
       [{ font: { bold: true, color: { rgb: S.diff > 0 ? 'B3261E' : '1B7F3A' } } }]);
@@ -1770,6 +1825,60 @@ function summarySheet(key, m){
   ws['!cols'] = [{ wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
   return ws;
 }
+
+/* ---------- shared bill split across projects ---------- */
+function splitRow(v = {}){
+  const d = document.createElement('div'); d.className = 'split-row';
+  d.innerHTML = `<small>Other project</small>
+    <input class="sp-name" placeholder="Name(s), e.g. Rahul, Anu" value="${esc(v.names || '')}">
+    <input class="sp-ppl" type="number" min="1" inputmode="numeric" placeholder="People" title="No. of people" value="${v.pax || ''}">
+    <button class="danger sp-del" type="button" aria-label="Remove">✕</button>
+    <input class="sp-proj" placeholder="Their Project ID" list="dl-project" value="${esc(v.project || '')}">
+    <input class="sp-amt" type="number" step="0.01" inputmode="decimal" placeholder="Share ₹" value="${v.amount || ''}">`;
+  d.querySelector('.sp-del').onclick = () => { d.remove(); if(!$('#split-rows').children.length){ F('split').checked = false; $('#split-box').hidden = true; } splitChanged(); };
+  d.querySelectorAll('input').forEach(i => i.addEventListener('input', splitChanged));
+  ['sp-name', 'sp-ppl'].forEach(c => d.querySelector('.' + c).addEventListener('change', splitEqually));
+  $('#split-rows').appendChild(d);
+}
+function splitList(){
+  if(!F('split').checked || isFuel(F('type').value)) return [];
+  return [...document.querySelectorAll('.split-row')].map(r => {
+    const names = r.querySelector('.sp-name').value.trim();
+    return { names, project: r.querySelector('.sp-proj').value.trim(), amount: r2(+r.querySelector('.sp-amt').value || 0),
+      pax: Math.max(1, namesOf(names).length, +r.querySelector('.sp-ppl').value || 0) };
+  });
+}
+function splitChanged(){
+  const sp = splitList(), bill = +F('bill').value || 0, mine = r2(bill - sp.reduce((s, x) => s + x.amount, 0));
+  $('#split-mine').textContent = sp.length ? `Your project’s share (${F('names').value || 'you'}): ${inr(mine)} of ${inr(bill)}` : '';
+  refreshCalc();
+}
+function splitEqually(){
+  const rows = [...document.querySelectorAll('.split-row')], bill = +F('bill').value || 0;
+  const mineP = Math.max(namesOf(F('names').value).length, +F('pax').value || 1);
+  const ppl = rows.map(r => Math.max(1, namesOf(r.querySelector('.sp-name').value).length, +r.querySelector('.sp-ppl').value || 0));
+  const per = bill / (mineP + ppl.reduce((a, b) => a + b, 0));
+  rows.forEach((r, i) => r.querySelector('.sp-amt').value = per ? r2(per * ppl[i]).toFixed(2) : '');
+  splitChanged();
+}
+F('split').addEventListener('change', () => {
+  $('#split-box').hidden = !F('split').checked;
+  if(F('split').checked && !$('#split-rows').children.length){ splitRow(); splitEqually(); }
+  if(!F('split').checked) $('#split-rows').innerHTML = '';
+  splitChanged();
+});
+$('#btn-split-add').onclick = () => { splitRow(); splitEqually(); };
+$('#btn-split-eq').onclick = splitEqually;
+['bill', 'names', 'pax'].forEach(id => F(id).addEventListener('input', () => { if(F('split').checked) splitChanged(); }));
+function clearSplit(){ F('split').checked = false; $('#split-box').hidden = true; $('#split-rows').innerHTML = ''; $('#split-mine').textContent = ''; }
+
+$('#btn-proj-add').onclick = () => {
+  if(isFuel(F('type').value)){ status('Own-vehicle conveyance cannot be shared between projects.', false, 'warn'); return; }
+  if(!F('split').checked){ F('split').checked = true; $('#split-box').hidden = false; }
+  splitRow(); splitEqually();
+  const rows = document.querySelectorAll('.split-row'), last = rows[rows.length - 1];
+  last.scrollIntoView({ block: 'center', behavior: 'smooth' }); setTimeout(() => last.querySelector('.sp-proj').focus(), 350);
+};
 
 /* ---------- tabs ---------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {

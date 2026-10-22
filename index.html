@@ -19,16 +19,40 @@
 :root{
   --bg:#f3f4f9; --surface:#ffffff; --ink:#1e1f2b; --muted:#6d6e71; --line:#d5d9e6;
   --brand:#2d2a6e; --brand-ink:#ffffff; --accent:#0096d6; --bill:#92d050; --bill-ink:#1d3a07;
-  --warn:#9a5b00; --warn-bg:#fff3dc; --err:#b3261e; --err-bg:#fde7e5;
+  --warn:#d98200; --warn-ink:#7a4500; --warn-bg:#fff4e0; --info:#0072bc; --info-bg:#e8f4fb; --err:#b3261e; --err-bg:#fde7e5;
   color-scheme:light;
   box-sizing:border-box;
   padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
 }
 @media (prefers-color-scheme:dark){
-  :root{--bg:#10121c;--surface:#1a1d2b;--ink:#e8e9f2;--muted:#a3a6b8;--line:#2e3247;
+  :root:not([data-theme="light"]){--bg:#10121c;--surface:#1a1d2b;--ink:#e8e9f2;--muted:#a3a6b8;--line:#2e3247;
     --brand:#8fb4ff;--brand-ink:#0d1030;--accent:#4cc3f2;--bill:#7fbf45;--bill-ink:#0c1a03;
-    --warn:#f2b44c;--warn-bg:#33270f;--err:#ff8a80;--err-bg:#3a1714;color-scheme:dark}
+    --warn:#f2b44c;--warn-ink:#ffd58a;--warn-bg:#33270f;--info:#6cc4f5;--info-bg:#10283a;--err:#ff8a80;--err-bg:#3a1714;color-scheme:dark}
 }
+:root[data-theme="dark"]{--bg:#10121c;--surface:#1a1d2b;--ink:#e8e9f2;--muted:#a3a6b8;--line:#2e3247;
+  --brand:#8fb4ff;--brand-ink:#0d1030;--accent:#4cc3f2;--bill:#7fbf45;--bill-ink:#0c1a03;
+  --warn:#f2b44c;--warn-ink:#ffd58a;--warn-bg:#33270f;--info:#6cc4f5;--info-bg:#10283a;--err:#ff8a80;--err-bg:#3a1714;color-scheme:dark}
+html.large body{zoom:1.15} html.xl body{zoom:1.3}
+.lockscr{position:fixed;inset:0;z-index:60;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;text-align:center}
+.lockscr[hidden]{display:none}
+.lockscr img{height:56px;width:auto;background:#fff;padding:10px 14px;border-radius:12px}
+.lockscr h2{margin:0;color:var(--brand)}
+.lockscr button{max-width:280px}
+.item .act{display:flex;gap:6px;justify-content:flex-end}
+.edit{background:transparent;color:var(--brand);border:1.5px solid var(--line);padding:8px 12px}
+.sumbox{background:var(--surface);border:1.5px solid var(--line);border-radius:10px;padding:14px;margin-top:14px}
+.sumbox h3{margin:0 0 8px;font-size:16px;color:var(--brand)}
+.sumbox table{width:100%;border-collapse:collapse;font-size:14px}
+.sumbox th,.sumbox td{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}
+.sumbox td.n,.sumbox th.n{text-align:right;font-variant-numeric:tabular-nums}
+.sumbox td:first-child{white-space:nowrap}
+.food-figs{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:6px 0 4px;text-align:center}
+.food-figs div{background:var(--bg);border-radius:8px;padding:8px 4px}
+.food-figs b{display:block;font-size:18px}
+.note.ok{background:#e9f8ee;color:#1b5e20;border-color:#2e9e4f;font-weight:700}
+.note.ok::before{content:"✅"}
+#type-sug{margin-top:8px}
+select.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--bill) 35%,transparent)}
 *,*::before,*::after{box-sizing:inherit}
 html,body{margin:0;min-height:100%}
 body{background:var(--bg);color:var(--ink);font:16px/1.45 "Atkinson Hyperlegible",system-ui,sans-serif;padding-bottom:84px}
@@ -58,10 +82,19 @@ button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:12px 16px
 .amount{margin-top:18px;padding:14px;border-radius:10px;background:var(--surface);border:1.5px solid var(--line)}
 .amount strong{font-size:28px;display:block}
 .amount small{color:var(--muted)}
-.note{padding:10px 12px;border-radius:8px;font-size:14px;margin-top:10px}
-.note.warn{background:var(--warn-bg);color:var(--warn)}
-.note.err{background:var(--err-bg);color:var(--err)}
-#status{position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:12px 14px;border-radius:10px;font-size:15px;display:none;z-index:20}
+.note{padding:11px 12px 11px 42px;border-radius:10px;font-size:14.5px;line-height:1.4;margin-top:10px;position:relative;
+  background:var(--info-bg);color:var(--info);border:1.5px solid var(--info);border-left-width:6px}
+.note::before{content:"ℹ️";position:absolute;left:12px;top:10px;font-size:17px}
+.note.warn{background:var(--warn-bg);color:var(--warn-ink);border-color:var(--warn);font-weight:600}
+.note.warn::before{content:"⚠️"}
+.note.err{background:var(--err-bg);color:var(--err);border-color:var(--err);font-weight:700}
+.note.err::before{content:"⛔"}
+.amount.has-warn{border:2px solid var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent)}
+.amount.has-warn strong{color:var(--warn-ink)}
+#status{position:fixed;left:12px;right:12px;bottom:calc(76px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:13px 14px;border-radius:12px;font-size:15px;font-weight:600;display:none;z-index:20;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+#status.ok{background:#1b7f3a;color:#fff}
+#status.warn{background:#b06a00;color:#fff}
+#status.err{background:#b3261e;color:#fff}
 nav{position:fixed;left:0;right:0;bottom:0;background:var(--surface);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(3,1fr);padding-bottom:env(safe-area-inset-bottom,0px);z-index:6}
 nav button{background:none;color:var(--muted);border-radius:0;padding:14px 4px;font-size:15px}
 nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(--brand)}
@@ -77,7 +110,7 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .item .amt{text-align:right;font-weight:700;font-variant-numeric:tabular-nums}
 .item .amt.has-bill{background:var(--bill);color:var(--bill-ink);padding:2px 8px;border-radius:6px}
 .item .act{margin-top:6px;text-align:right}
-.tag{display:inline-block;font-size:12px;padding:1px 6px;border-radius:5px;background:var(--warn-bg);color:var(--warn);margin-left:4px}
+.tag{display:inline-block;font-size:12px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--err);color:#fff;margin-left:6px;vertical-align:1px}
 .empty{color:var(--muted);padding:24px 0;text-align:center}
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;z-index:30;padding:calc(20px + env(safe-area-inset-top,0px)) 12px 20px}
 .modal .box{background:var(--surface);border-radius:12px;max-width:520px;margin:0 auto;max-height:100%;display:flex;flex-direction:column}
@@ -90,6 +123,8 @@ nav button[aria-current="page"]{color:var(--brand);box-shadow:inset 0 3px 0 var(
 .muted{color:var(--muted);font-size:14px}
 input.ocr{border-color:var(--bill);box-shadow:0 0 0 3px color-mix(in srgb,var(--bill) 35%,transparent)}
 #ocr-note{font-size:14px;margin-top:8px;color:var(--muted)}
+#ocr-note.read{padding:10px 12px;border-radius:10px;background:#e9f8ee;color:#1b5e20;border:1.5px solid #2e9e4f;font-weight:600}
+#ocr-note.miss{padding:10px 12px;border-radius:10px;background:var(--warn-bg);color:var(--warn-ink);border:1.5px solid var(--warn);font-weight:600}
 .photo-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1}
 .photo-btns button{padding:12px 8px}
 .scanner{position:fixed;inset:0;background:#111;color:#fff;z-index:40;display:flex;flex-direction:column;
@@ -131,7 +166,9 @@ a{color:var(--brand)}
 <div id="prep" class="note" hidden></div>
 <div id="pending" class="note warn" hidden></div>
 <!-- ADD -->
+<div id="remind" hidden></div>
 <section id="tab-add">
+  <div id="edit-bar" class="note" hidden><span id="edit-text"></span> <button class="edit" id="btn-edit-cancel" type="button" style="margin-left:6px;padding:4px 10px">Cancel</button></div>
   <div class="claimbar"><div><label for="f-folder">Claim folder</label><select id="f-folder" class="claimsel"></select></div><button class="ghost newclaim" type="button">+ New</button></div>
   <div class="row">
     <div><label for="f-date">Date</label><input type="date" id="f-date"></div>
@@ -182,11 +219,11 @@ a{color:var(--brand)}
 
   <div class="photo">
     <div class="photo-btns">
-      <button class="ghost" id="btn-photo" type="button">📷 Take bill photo</button>
-      <button class="ghost" id="btn-gallery" type="button">🖼️ Choose from gallery</button>
+      <button class="ghost" id="btn-photo" type="button">📷 Take photo</button>
+      <button class="ghost" id="btn-gallery" type="button">📎 Upload image / PDF</button>
     </div>
     <input type="file" id="f-photo" accept="image/*" capture="environment" hidden>
-    <input type="file" id="f-gallery" accept="image/*" hidden>
+    <input type="file" id="f-gallery" accept="image/*,application/pdf,.pdf" hidden>
   </div>
   <div id="photo-box" hidden>
     <img id="f-preview" alt="Scanned bill preview">
@@ -197,6 +234,7 @@ a{color:var(--brand)}
     </div>
   </div>
   <div id="ocr-note" aria-live="polite"></div>
+  <div id="type-sug" hidden><button class="ghost" id="btn-sug" type="button"></button></div>
   <details id="ocr-raw" hidden style="margin-top:6px;font-size:13px"><summary class="muted">Show text read from the bill</summary><pre id="ocr-text" style="white-space:pre-wrap;font-size:12px;background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:8px;max-height:220px;overflow:auto"></pre></details>
 
   <div class="amount" aria-live="polite">
@@ -227,6 +265,7 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-open">Open Excel</button>
   </div>
   <div class="list" id="l-items"></div>
+  <div id="l-summary"></div>
   <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit claim</button></p>
   <p class="muted" id="submit-hint" hidden>Finalises the claim Excel and moves the claim folder to “Submitted” in your OneDrive. It is then no longer shown here.</p>
 </section>
@@ -235,7 +274,7 @@ a{color:var(--brand)}
 <section id="tab-set" hidden>
   <div class="stack">
     <button class="ghost" id="btn-install" type="button" hidden>📲 Add app to home screen</button>
-    <div>
+    <div id="client-box" hidden>
       <label for="s-client">Microsoft app (client) ID</label>
       <input id="s-client" placeholder="Enter Microsoft app (client) ID" autocomplete="off">
       <p class="muted">From your Azure app registration. Needed once.</p>
@@ -252,6 +291,22 @@ a{color:var(--brand)}
     <div>
       <label for="s-name">Your name (default for Names)</label>
       <input id="s-name" placeholder="Enter your name">
+    </div>
+    <div class="row">
+      <div><label for="s-theme">Appearance</label>
+        <select id="s-theme"><option value="">Phone setting</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
+      <div><label for="s-text">Text size</label>
+        <select id="s-text"><option value="">Normal</option><option value="large">Large</option><option value="xl">Extra large</option></select></div>
+    </div>
+    <div id="lock-box" hidden>
+      <label>App lock</label>
+      <button class="ghost" id="btn-lock" type="button">🔒 Turn on fingerprint / face lock</button>
+      <p class="muted">Asks for your fingerprint, face or phone PIN whenever the app is opened.</p>
+    </div>
+    <div>
+      <label>Month-end reminder</label>
+      <button class="ghost" id="btn-ics" type="button">📅 Add monthly reminder to my calendar</button>
+      <p class="muted">A calendar reminder 3 days before every month end, at 9:00.</p>
     </div>
 
     <div>
@@ -282,6 +337,13 @@ a{color:var(--brand)}
     <button type="button" class="sec" id="sc-asis">Use as is</button>
     <button type="button" class="pri" id="sc-done">Done</button>
   </div>
+</div>
+
+<div class="lockscr" id="lock" hidden>
+  <img id="lock-logo" alt="StarOne IT">
+  <h2>Travel Claims is locked</h2>
+  <p class="muted">Use your fingerprint, face or phone PIN.</p>
+  <button class="primary" id="btn-unlock" type="button">🔓 Unlock</button>
 </div>
 
 <div class="modal" id="install">
@@ -341,8 +403,13 @@ const monthEnd = iso => { const [y, m] = iso.split('-').map(Number); const d = n
 const monthName = iso => new Date(iso + 'T00:00:00').toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let statusTimer;
-function status(msg, sticky){
+function status(msg, sticky, kind){
   const el = $('#status'); el.textContent = msg; el.style.display = msg ? 'block' : 'none';
+  // colour by meaning: green = done, amber = needs attention, red = problem
+  kind = kind || (/^✓/.test(msg) ? 'ok'
+    : /could not|couldn’t|failed|error|denied|not able|problem|AADSTS/i.test(msg) ? 'err'
+    : /^📶|no internet|no signal|enter |choose |fill in|first|waiting|no claim|nothing|older|overdue|warning|locked|open somewhere/i.test(msg) ? 'warn' : '');
+  el.className = kind;
   clearTimeout(statusTimer); if(msg && !sticky) statusTimer = setTimeout(() => el.style.display = 'none', 4000);
 }
 
@@ -453,14 +520,15 @@ async function renumber(m, key){
   const order = new Map(m.entries.map((e, i) => [e, i]));
   m.entries.sort((a, b) => a.date !== b.date ? a.date.localeCompare(b.date) : order.get(a) - order.get(b));
   const moves = [];
-  m.entries.forEach((e, i) => { e.line = i + 1; if(e.photo && e.photo !== e.line + '.jpg') moves.push(e); });
+  const ext = e => (e.photo.match(/\.(\w+)$/) || [, 'jpg'])[1];
+  m.entries.forEach((e, i) => { e.line = i + 1; if(e.photo && e.photo !== e.line + '.' + ext(e)) moves.push(e); });
   if(!moves.length) return;
   status('Renumbering bill photos…', true);
   const stamp = Date.now();
   // two steps so that e.g. 1.jpg and 2.jpg can swap names without clashing
-  for(const e of moves){ const tmp = `tmp-${stamp}-${e.line}.jpg`; await renameFile(m.folderId, e.photo, tmp); e.photo = tmp; }
+  for(const e of moves){ const tmp = `tmp-${stamp}-${e.line}.${ext(e)}`; await renameFile(m.folderId, e.photo, tmp); e.photo = tmp; }
   await saveJson(key);
-  for(const e of moves){ const fin = e.line + '.jpg'; const it = await (await renameFile(m.folderId, e.photo, fin)).json(); e.photo = fin; e.photoUrl = it.webUrl; }
+  for(const e of moves){ const fin = e.line + '.' + ext(e); const it = await (await renameFile(m.folderId, e.photo, fin)).json(); e.photo = fin; e.photoUrl = it.webUrl; }
 }
 
 /* ---------- reimbursement policy ---------- */
@@ -547,6 +615,7 @@ function buildXlsx(key, m){
   ws['!autofilter'] = {ref:`A1:M${Math.max(n+1,1)}`};
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, ('Claim ' + key).replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 31));
+  XLSX.utils.book_append_sheet(wb, summarySheet(key, m), 'Summary');
   return new Blob([XLSX.write(wb, {bookType:'xlsx', type:'array'})], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
 }
 
@@ -748,7 +817,7 @@ async function autoScan(raw){
   }finally{ bmp.close && bmp.close(); }
 }
 function setPhoto(blob, note){
-  photoBlob = blob;
+  photoBlob = blob; $('#btn-adjust').hidden = false;
   $('#f-preview').src = URL.createObjectURL(blob);
   $('#photo-box').hidden = false;
   $('#scan-note').textContent = note || '';
@@ -764,6 +833,15 @@ $('#btn-adjust').onclick = async () => {
 $('#btn-original').onclick = () => { if(photoRaw) setPhoto(photoRaw, 'Original photo kept (not cropped).'); };
 const onPicked = async ev => {
   const f = ev.target.files[0]; if(!f) return;
+  if(f.type === 'application/pdf' || /\.pdf$/i.test(f.name)){
+    try{
+      status('Opening PDF…', true);
+      const r = await readPdf(f);
+      status(''); photoRaw = null;
+      setDoc(new Blob([f], {type: 'application/pdf'}), r.img, r.text);
+    }catch(e){ status(e.message || 'Could not open that PDF.'); }
+    ev.target.value = ''; return;
+  }
   status('Preparing photo…', true);
   try{
     const raw = await compress(f);
@@ -792,6 +870,7 @@ function parseBillDate(text){
   const today = new Date(); const found = [];
   const push = (d, m, y, idx) => {
     y = +y; if(y < 100) y += 2000; d = +d; m = +m;
+    if(m > 12 && d <= 12){ const t = d; d = m; m = t; }   // 10/22/26 (US order) → 22-10-2026
     if(m < 1 || m > 12 || d < 1 || d > 31 || y < 2020) return;
     const dt = new Date(Date.UTC(y, m - 1, d));
     if(dt.getUTCDate() !== d) return;
@@ -833,7 +912,7 @@ function parseBillAmount(text){
   const nums = l => (fixLine(l).match(NUM) || []).map(val).filter(ok);
   const afterRs = l => { const out = [], re = /₹\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g; let m; const t = fixLine(l); while((m = re.exec(t))) out.push(val(m[1])); return out.filter(ok); };
   const strong = /grand\s*total|net\s*(amt|amount|total|payable|pay)|amount\s*payable|total\s*(amt|amount|payable|fare|due)|bill\s*(amt|amount)|amount\s*(paid|due)|to\s*pay|payable|total\s*rs|total\s*inr|total\s*₹/i;
-  const weak = /\btotal\b|\btot\b|\bamount\b|\bamt\b|\bfare\b|\bpaid\b|\bpayment\b/i;
+  const weak = /\bamount\b|\bamt\b|\bfare\b|\bpaid\b|\bpayment\b|\bcash\b/i;
   const skip = /sub\s*-?\s*total|total\s*(qty|quantity|items?|itms|no)|\bqty\s*:|items?\s*:|fssai|k\.?\s?o\.?\s?t|table\s*no|pax|gstin|phone|ph\s*[:.]|mob|bill\s*no|invoice\s*no|txn|transaction\s*id|ref(erence)?\s*no|upi\s*id|tax\s*%|cgst|sgst|igst|discount|round|tendered|change\s*due|cash\s*paid|balance/i;
   const best = arr => arr.length ? Math.max(...arr) : null;
   // amount written after a keyword: same line, or on the next line
@@ -847,16 +926,21 @@ function parseBillAmount(text){
   const lastNum = l => { const t = fixLine(l); const r = [...t.matchAll(/₹\s*(\d{1,3}(?:,\d{2,3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)/g)].map(m => m[1]);
     const raws = r.length ? r : (t.match(NUM) || []);
     for(let k = raws.length - 1; k >= 0; k--){ const v = fixRupee(val(raws[k]), raws[k]); if(ok(v)) return v; } return null; };
+  const header = /\b(rate|qty|price|item|items|sno|s\.?\s?no|description|particulars|name)\b/i;   // table column headings
   const afterKey = re => best(lines.flatMap((l, i) => {
-    if(!re.test(l) || skip.test(l)) return [];
+    if(!re.test(l) || skip.test(l) || (re !== strong && header.test(l))) return [];
     let v = lastNum(l);
     if(v == null && lines[i+1] && !skip.test(lines[i+1])) v = lastNum(lines[i+1]);
     return v == null ? [] : [v];
   }));
   // 1) the largest Total / Grand total / Amount payable / Amount / Amt / Fare … line
   // 2) any amount written after Rs. / RS. / ₹ (screenshots, tickets, UPI)  3) largest amount with paise
-  const kv = [afterKey(strong), afterKey(weak)].filter(x => x != null);
-  let v = kv.length ? Math.max(...kv) : best(lines.filter(l => !skip.test(l)).flatMap(afterRs));
+  // Tier 1: any kind of TOTAL line (Total, Grand total, Total amount, Amount payable, Net amount …) – the largest one
+  // Tier 2: no total on the bill → amounts after Rs. / ₹ and after Amount / Amt / Fare / Paid / Cash – the largest one
+  const total = /\btotal\b|\btot\b/i;
+  const t1 = [afterKey(strong), afterKey(total)].filter(x => x != null);
+  const t2 = [afterKey(weak), best(lines.filter(l => !skip.test(l)).flatMap(afterRs))].filter(x => x != null);
+  let v = t1.length ? Math.max(...t1) : t2.length ? Math.max(...t2) : null;
   if(v == null) v = best(lines.filter(l => !skip.test(l)).flatMap(l => (fixLine(l).match(/\b\d{1,6}\.\d{2}\b/g) || []).map(Number).filter(ok)));
   return v == null ? null : Math.round(v * 100) / 100;
 }
@@ -876,7 +960,7 @@ function loadTesseract(){
     document.head.appendChild(sc);
   });
 }
-function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; $('#ocr-raw').hidden = true; }
+function clearOcrMarks(){ ['date','bill'].forEach(id => F(id).classList.remove('ocr')); $('#ocr-note').textContent = ''; $('#ocr-note').className = ''; $('#ocr-raw').hidden = true; }
 // per-pixel greyscale / invert (works on iPhone Safari, which lacks canvas filters)
 function pixels(canvas, fn){
   const x = canvas.getContext('2d'), id = x.getImageData(0, 0, canvas.width, canvas.height), p = id.data;
@@ -960,18 +1044,78 @@ async function readBill(blob){
       const D = await rec(img.inverted(), '3'); if(run !== ocrRun) return;
       text += '\n' + D; dates.push(...allBillDates(D)); a = a ?? parseBillAmount(text);
     }
-    const votes = {}; dates.forEach(x => votes[x] = (votes[x] || 0) + 1);
-    let d = dates.length ? dates.slice().sort((x, y) => votes[y] - votes[x])[0] : null;
-    if(isFuel(F('type').value)) a = null;
-    $('#ocr-text').textContent = text; $('#ocr-raw').hidden = false;
-    const got = [];
-    if(d && F('date').value === startDate){ F('date').value = d; F('date').classList.add('ocr'); got.push('date ' + dmy(d)); }
-    if(a != null && !F('bill').value && !startBill){ F('bill').value = a.toFixed(2); F('bill').classList.add('ocr'); got.push('amount ' + inr(a)); }
-    note.textContent = got.length
-      ? 'Read from bill: ' + got.join(', ') + '. Please check before saving.'
-      : 'Could not read the date or amount from this image. Please enter them yourself.';
-    refreshCalc(); preloadMonth();
+    applyRead(text, dates, a, startDate, startBill);
   }catch(e){ if(run === ocrRun) note.textContent = e.message; }
+}
+function applyRead(text, dates, a, startDate, startBill){
+  const votes = {}; dates.forEach(x => votes[x] = (votes[x] || 0) + 1);
+  const d = dates.length ? dates.slice().sort((x, y) => votes[y] - votes[x])[0] : null;
+  if(isFuel(F('type').value)) a = null;
+  $('#ocr-text').textContent = text; $('#ocr-raw').hidden = false;
+  const got = [];
+  const gt = guessType(text);
+  $('#type-sug').hidden = true;
+  if(gt && gt !== F('type').value && !editing){
+    if(!typeTouched){ setType(gt); F('type').classList.add('ocr'); got.push('type ' + typeLabel(gt)); if(isFuel(gt)) a = null; }
+    else{ $('#btn-sug').textContent = '💡 This looks like ' + typeLabel(gt) + ': tap to use it'; $('#btn-sug').onclick = () => { setType(gt); $('#type-sug').hidden = true; }; $('#type-sug').hidden = false; }
+  }
+  if(d && F('date').value === startDate){ F('date').value = d; F('date').classList.add('ocr'); got.push('date ' + dmy(d)); }
+  if(a != null && !F('bill').value && !startBill){ F('bill').value = a.toFixed(2); F('bill').classList.add('ocr'); got.push('amount ' + inr(a)); }
+  $('#ocr-note').textContent = got.length
+    ? '✓ Read from bill: ' + got.join(', ') + '. Please check before saving.'
+    : '⚠️ Could not read the date or amount from this bill. Please enter them yourself.';
+  $('#ocr-note').className = got.length ? 'read' : 'miss';
+  refreshCalc(); preloadMonth();
+}
+
+/* ---------- PDF bills (e.g. Uber, IRCTC, hotel invoices) ---------- */
+const PDFJS = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/';
+let pdfReady = null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(pdfReady) return pdfReady;
+  pdfReady = new Promise((ok, fail) => {
+    const sc = document.createElement('script'); sc.src = PDFJS + 'pdf.min.js';
+    sc.onload = () => { pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + 'pdf.worker.min.js'; ok(); };
+    sc.onerror = () => { pdfReady = null; fail(new Error('Could not load the PDF reader (check internet).')); };
+    document.head.appendChild(sc);
+  });
+  return pdfReady;
+}
+async function readPdf(file){
+  await loadPdfJs();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  let text = '';
+  for(let p = 1; p <= Math.min(pdf.numPages, 3); p++){                    // text of the first pages, line by line
+    const tc = await (await pdf.getPage(p)).getTextContent(), rows = [];
+    for(const it of tc.items){
+      if(!it.str || !it.str.trim()) continue;
+      const y = Math.round(it.transform[5]);
+      let r = rows.find(r => Math.abs(r.y - y) <= 3); if(!r){ r = { y, items: [] }; rows.push(r); }
+      r.items.push({ x: it.transform[4], s: it.str });
+    }
+    rows.sort((a, b) => b.y - a.y);
+    text += rows.map(r => r.items.sort((a, b) => a.x - b.x).map(i => i.s).join(' ')).join('\n') + '\n';
+  }
+  const page = await pdf.getPage(1), v1 = page.getViewport({ scale: 1 });       // first page as a picture for the preview
+  const vp = page.getViewport({ scale: Math.min(3, 1400 / v1.width) });
+  const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  await page.render({ canvasContext: x, viewport: vp }).promise;
+  const img = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.85));
+  return { text, img };
+}
+function setDoc(pdfBlob, img, text){
+  photoBlob = pdfBlob;                                                      // the original PDF is saved as the bill
+  $('#f-preview').src = URL.createObjectURL(img);
+  $('#photo-box').hidden = false;
+  $('#scan-note').textContent = '📄 PDF attached. The original PDF is saved as the bill.';
+  $('#btn-original').hidden = true; $('#btn-adjust').hidden = true;
+  $('#btn-photo').textContent = '📷 Retake';
+  if(text.replace(/\s/g, '').length > 20){                                    // digital PDF: read its text directly (exact)
+    ++ocrRun; clearOcrMarks();
+    applyRead(text, allBillDates(text), parseBillAmount(text), F('date').value, F('bill').value);
+  }else readBill(img);                                                      // scanned PDF: read the picture
 }
 
 /* ---------- add form ---------- */
@@ -997,6 +1141,7 @@ function refreshCalc(){
   $('#calc-note').textContent = c.note + (e.type === 'Food' && !m && cfg.folderId ? ' · loading that day’s earlier food bills…' : '');
   if(e.date && monthEnd(e.date) < todayISO()) c.warn.push(`This expense is from ${monthName(e.date)}. Claims should be submitted before the end of the month in which the expense was made.`);
   $('#calc-warn').innerHTML = c.warn.map(w => `<div class="note warn">${esc(w)}</div>`).join('');
+  document.querySelector('.amount').classList.toggle('has-warn', c.warn.length > 0);
   return c;
 }
 function fillLists(){
@@ -1009,9 +1154,9 @@ function resetForm(keepContext){
   F('names').value = F('names').value || cfg.myName;
   F('rate').value = '';
   F('location').value = F('location').value || cfg.lastLocation;
-  ocrRun++; clearOcrMarks();
+  ocrRun++; clearOcrMarks(); typeTouched = false; $('#type-sug').hidden = true; F('type').classList.remove('ocr');
   photoBlob = null; photoRaw = null; $('#photo-box').hidden = true; $('#f-photo').value = '';
-  $('#btn-photo').textContent = '📷 Take bill photo';
+  $('#btn-photo').textContent = '📷 Take photo'; $('#btn-adjust').hidden = false;
   syncTypeFields(); refreshCalc();
 }
 async function preloadMonth(){
@@ -1034,19 +1179,33 @@ $('#btn-save').onclick = async () => {
   if(isFuel(e.type) && (!e.fuelRate || !e.km)) missing.push('fuel price and km');
   if(!isFuel(e.type) && !e.bill) missing.push('bill amount');
   if(missing.length){ status('Fill in ' + missing.join(', ') + '.'); return; }
-  if(!isFuel(e.type) && !photoBlob && !confirm('No bill photo attached. Save this line without a bill (e.g. a cash auto fare)?')) return;
+  if(!isFuel(e.type) && !photoBlob && !(editing && editing.hadPhoto) && !confirm('No bill attached. Save this line without a bill (e.g. a cash auto fare)?')) return;
+  const key = editing ? editing.key : cfg.claimFolder;
+  if(photoBlob){ try{ e.photoHash = await hashBlob(photoBlob); }catch{} }
+  // duplicate check against lines already in this claim
+  try{
+    const m = months[key] || (key && navigator.onLine && account ? await loadMonth(key) : null);
+    const dup = m && findDuplicate(m, e);
+    if(dup && !confirm(`Possible duplicate of line ${dup.x.line}: ${typeLabel(dup.x.type)}, ${dmy(dup.x.date)}, ${inr(dup.x.amount)}.\n${dup.sameImage ? 'The same bill image is already attached to that line.' : 'Same date, type and amount.'}\n\nSave anyway?`)) return;
+  }catch{}
 
   saving = true; $('#btn-save').disabled = true;
-  const key = cfg.claimFolder;
   try{
     if(!key) throw new Error('Choose or create a claim folder at the top of the Add tab.');
     rememberInputs(e);
     if(!navigator.onLine) throw offlineError();
+    if(editing){
+      const entry = await updateLine(editing, e, photoBlob);
+      status(`✓ Line updated (now line ${entry.line}) · ${inr(entry.amount)}`);
+      endEdit(); resetForm(true);
+      return;
+    }
     const entry = await saveLine(key, e, photoBlob, true);
-    status(`Saved as line ${entry.line} · ${inr(entry.amount)}`);
+    status(`✓ Saved as line ${entry.line} · ${inr(entry.amount)}`);
     resetForm(true);
   }catch(err){
-    if(isOffline(err) && key){
+    if(isOffline(err) && editing){ status('Editing a line needs internet. Try again when you are online.'); }
+    else if(isOffline(err) && key){
       try{
         await queue.add({ key, e, photo: photoBlob || null, at: Date.now() });
         status('📶 No signal: saved on this phone. It will upload to OneDrive automatically when you are online.');
@@ -1074,10 +1233,14 @@ async function saveLine(key, e, blob, show){
   const c = calc(e, m.entries);
   const line = m.entries.length + 1;
   let photo = '', photoUrl = '';
-  if(blob){ say('Uploading bill photo ' + line + '.jpg…'); photo = line + '.jpg'; photoUrl = (await putFile(m.folderId, photo, blob, 'image/jpeg')).webUrl; }
+  if(blob){
+    const isPdf = blob.type === 'application/pdf';
+    photo = line + (isPdf ? '.pdf' : '.jpg'); say('Uploading bill ' + photo + '…');
+    photoUrl = (await putFile(m.folderId, photo, blob, isPdf ? 'application/pdf' : 'image/jpeg')).webUrl;
+  }
   const entry = {line, date:e.date, project:e.project, type:e.type, location:e.location, vehicle:e.vehicle, fuelRate:e.fuelRate,
     km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:isFuel(e.type) ? null : e.bill,
-    amount:c.amount, remarks:e.remarks, photo, photoUrl, saved:new Date().toISOString()};
+    amount:c.amount, remarks:e.remarks, photo, photoUrl, photoHash:e.photoHash || '', saved:new Date().toISOString()};
   m.entries.push(entry);
   say('Saving…');
   try{ await renumber(m, key); await saveJson(key); }
@@ -1134,7 +1297,7 @@ setInterval(flushQueue, 60000);
 async function renderList(){
   const key = cfg.claimFolder;
   const box = $('#l-items');
-  $('#btn-submit').hidden = $('#submit-hint').hidden = true;
+  $('#btn-submit').hidden = $('#submit-hint').hidden = true; $('#l-summary').innerHTML = '';
   if(!account || !cfg.folderId){ box.innerHTML = '<p class="empty">Sign in and choose a OneDrive folder in Settings to see your claims.</p>'; return; }
   box.innerHTML = '<p class="empty">Loading…</p>';
   try{
@@ -1147,10 +1310,11 @@ async function renderList(){
     const due = oldest ? monthEnd(oldest) : '', today = todayISO();
     const left = due ? Math.round((new Date(due) - new Date(today)) / 864e5) : 0;
     $('#l-deadline').innerHTML = !oldest ? ''
-      : due < today ? `<div class="note warn">Overdue: expenses from ${monthName(oldest)} should have been submitted by ${dmy(due)}. Please submit now.</div>`
+      : due < today ? `<div class="note err">Overdue: expenses from ${monthName(oldest)} should have been submitted by ${dmy(due)}. Please submit now.</div>`
       : left <= 3 ? `<div class="note warn">Submit by ${dmy(due)}: ${left === 0 ? 'today is' : left + (left === 1 ? ' day' : ' days') + ' left until'} the end of the month.</div>`
       : `<p class="muted">Submit before the end of the month: by ${dmy(due)}.</p>`;
     $('#btn-submit').hidden = $('#submit-hint').hidden = !m.entries.length;
+    $('#l-summary').innerHTML = summaryHtml(m);
     if(!m.entries.length){ box.innerHTML = '<p class="empty">No claim lines in this claim folder yet. Add one from the Add tab.</p>'; return; }
     box.innerHTML = m.entries.map(e => {
       const late = monthEnd(e.date) < todayISO();
@@ -1161,13 +1325,14 @@ async function renderList(){
           <div class="meta">${dmy(e.date)} · ${esc(e.project)}</div>
           <div class="meta">${esc(detail)}${e.remarks ? ' · ' + esc(e.remarks) : ''}${e.photo ? '' : ' · No bill'}</div></div>
         <div><div class="amt ${e.photo ? 'has-bill' : ''}">${inr(e.amount)}</div>
-          <div class="act"><button class="danger" data-del="${e.line}">Delete</button></div></div>
+          <div class="act"><button class="edit" data-edit="${e.line}">Edit</button><button class="danger" data-del="${e.line}">Delete</button></div></div>
       </div>`;
     }).join('');
   }catch(err){ box.innerHTML = `<div class="note err">${esc(err.message)}</div>`; }
 }
 
 $('#l-items').addEventListener('click', async ev => {
+  if(ev.target.dataset.edit){ startEdit(+ev.target.dataset.edit); return; }
   const line = +ev.target.dataset.del; if(!line) return;
   const key = cfg.claimFolder, m = months[key], e = m.entries[line - 1];
   if(!confirm(`Delete line ${line} (${typeLabel(e.type)}, ${inr(e.amount)})? Later lines and their photos will be renumbered.`)) return;
@@ -1231,12 +1396,14 @@ $('#btn-submit').onclick = async () => {
     delete months[key]; cfg.claimFolder = ''; saveCfg();
     await loadClaimFolders(); renderList(); preloadMonth(); refreshCalc();
     status(`✓ “${key}” submitted (${inr(bal)}). It is now in the “${SUBMITTED}” folder.`);
+    checkReminder();
   }catch(err){ status(err.message, true); setTimeout(() => status(''), 8000); }
   finally{ submitting = false; $('#btn-submit').disabled = false; }
 };
 
 /* ---------- settings + folder picker ---------- */
 function renderSettings(){
+  $('#client-box').hidden = !!BUILT_IN_CLIENT_ID;
   $('#s-client').value = cfg.clientId; $('#s-name').value = cfg.myName;
   $('#s-folder').textContent = cfg.folderId ? cfg.folderPath : 'No folder chosen';
   $('#who').textContent = account ? `${account.username}${cfg.folderPath ? ' · ' + cfg.folderPath : ''}` : 'Not signed in';
@@ -1377,6 +1544,233 @@ if(!isInstalled()){
   if(!cfg.installAsked) setTimeout(showInstall, 2500);
 }
 
+
+/* ---------- appearance: dark mode and text size ---------- */
+function applyLook(){
+  const h = document.documentElement;
+  if(cfg.theme) h.dataset.theme = cfg.theme; else delete h.dataset.theme;
+  h.classList.toggle('large', cfg.textSize === 'large'); h.classList.toggle('xl', cfg.textSize === 'xl');
+}
+applyLook();
+$('#s-theme').value = cfg.theme || ''; $('#s-text').value = cfg.textSize || '';
+$('#s-theme').addEventListener('change', () => { cfg.theme = $('#s-theme').value; saveCfg(); applyLook(); });
+$('#s-text').addEventListener('change', () => { cfg.textSize = $('#s-text').value; saveCfg(); applyLook(); });
+
+/* ---------- app lock (fingerprint / face / phone PIN) ---------- */
+const b64u = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const ub64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0));
+const rnd = n => crypto.getRandomValues(new Uint8Array(n));
+const canLock = !!(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+async function verifyUser(){
+  await navigator.credentials.get({ publicKey: { challenge: rnd(32), allowCredentials: [{ type: 'public-key', id: ub64(cfg.lockCred) }],
+    userVerification: 'required', timeout: 60000 } });
+}
+function showLock(){ if(!cfg.lockCred) return; $('#lock-logo').src = document.querySelector('header img').src; $('#lock').hidden = false; }
+function renderLock(){ $('#lock-box').hidden = !canLock; $('#btn-lock').textContent = cfg.lockCred ? '🔓 Turn off app lock' : '🔒 Turn on fingerprint / face lock'; }
+$('#btn-unlock').onclick = async () => {
+  try{ await verifyUser(); $('#lock').hidden = true; }
+  catch(e){ status('Not unlocked. Try again with your fingerprint, face or phone PIN.', false, 'warn'); }
+};
+$('#btn-lock').onclick = async () => {
+  try{
+    if(cfg.lockCred){ await verifyUser(); delete cfg.lockCred; saveCfg(); status('✓ App lock turned off.'); }
+    else{
+      const cred = await navigator.credentials.create({ publicKey: { challenge: rnd(32), rp: { name: 'Travel Claims' },
+        user: { id: rnd(16), name: (account && account.username) || 'travel-claims', displayName: cfg.myName || 'Travel Claims' },
+        pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
+        authenticatorSelection: { authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged' },
+        timeout: 60000, attestation: 'none' } });
+      cfg.lockCred = b64u(cred.rawId); saveCfg(); status('✓ App lock is on. The app will ask to unlock when opened.');
+    }
+  }catch(e){ status('App lock could not be changed: ' + (e.message || 'cancelled'), false, 'warn'); }
+  renderLock();
+};
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if(document.hidden) hiddenAt = Date.now();
+  else if(cfg.lockCred && hiddenAt && Date.now() - hiddenAt > 60000) showLock();   // locked again after 1 minute away
+});
+renderLock(); showLock();
+
+/* ---------- month-end reminder ---------- */
+async function checkReminder(){
+  const box = $('#remind');
+  if(!account || !cfg.folderId || !(cfg.folderNames || []).length){ box.hidden = true; return; }
+  const today = todayISO(), me = monthEnd(today), left = Math.round((new Date(me) - new Date(today)) / 864e5);
+  const overdue = [], open = [];
+  for(const name of cfg.folderNames.slice(0, 12)){
+    try{
+      const m = await loadMonth(name);
+      if(!m.entries.length) continue;
+      const oldest = m.entries.reduce((o, e) => !o || e.date < o ? e.date : o, '');
+      (monthEnd(oldest) < today ? overdue : open).push(name);
+    }catch(e){ if(isOffline(e)) break; }
+  }
+  const q = n => n.map(x => '“' + esc(x) + '”').join(', ');
+  if(overdue.length){ box.className = 'note err'; box.innerHTML = `Overdue: ${q(overdue)} ${overdue.length > 1 ? 'have' : 'has'} expenses from a previous month. Please submit now.`; box.hidden = false; }
+  else if(open.length && left <= 5){ box.className = 'note warn'; box.innerHTML = `Month end on ${dmy(me)} (${left === 0 ? 'today' : left + (left === 1 ? ' day' : ' days') + ' left'}): please submit ${q(open)}.`; box.hidden = false; }
+  else box.hidden = true;
+}
+$('#btn-ics').onclick = () => {
+  const pad = n => String(n).padStart(2, '0');
+  const now = new Date(); let y = now.getFullYear(), mo = now.getMonth() + 1;
+  let d = new Date(y, mo, 0).getDate() - 2;                                     // 3rd-last day of the month
+  if(now.getDate() > d){ mo++; if(mo > 12){ mo = 1; y++; } d = new Date(y, mo, 0).getDate() - 2; }
+  const day = `${y}${pad(mo)}${pad(d)}`;
+  const url = location.origin + location.pathname;
+  const ics = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//StarOne IT//Travel Claims//EN', 'BEGIN:VEVENT',
+    'UID:travel-claims-month-end@staroneit.com', 'DTSTAMP:' + new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z',
+    `DTSTART:${day}T090000`, `DTEND:${day}T091500`, 'RRULE:FREQ=MONTHLY;BYMONTHDAY=-3',
+    'SUMMARY:Submit travel claims (month end)', 'DESCRIPTION:Submit your travel expense claims before the end of the month. ' + url,
+    'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Submit travel claims', 'TRIGGER:PT0M', 'END:VALARM', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' })); a.download = 'travel-claims-reminder.ics';
+  document.body.appendChild(a); a.click(); a.remove();
+  status('📅 Open the downloaded reminder and choose “Add to calendar”.', false, 'ok');
+};
+
+/* ---------- expense type suggestion from the bill text ---------- */
+const TYPE_HINTS = [
+  ['Auto Charge', /\b(uber|ola|rapido|auto|autorickshaw|auto ?rickshaw|taxi|cab|trip details|your trip|driver|license plate|blu ?smart|meru)\b/gi],
+  ['Ticket', /\b(metro|ksrtc|kerala rtc|irctc|railway|rail|train|pnr|coach|berth|bus|redbus|flight|airline|boarding|indigo|air india|vistara|akasa|e-?ticket|journey)\b/gi],
+  ['Room Rent', /\b(room|rooms|lodge|check[- ]?in|check[- ]?out|nights?|tariff|resort|stay|guest ?house|accommodation|arrival|departure)\b/gi],
+  ['Food', /\b(restaurant|cafe|cafeteria|canteen|dosa|biri?y?ani|briyani|meals?|coffee|tea|juice|food|veg|chicken|mutton|beef|fish|porotta|parotta|chapathi|chapati|curry|thali|idli|vada|puttu|kot|waiter|bakery|snacks?)\b/gi],
+  ['Other', /\b(parking|toll|fastag|printing|xerox|photocopy|courier|stationery)\b/gi]];
+function guessType(text){
+  let best = null, bs = 0;
+  for(const [t, re] of TYPE_HINTS){ const n = (text.match(re) || []).length; if(n > bs){ bs = n; best = t; } }
+  return bs >= 1 ? best : null;
+}
+let typeTouched = false;
+F('type').addEventListener('change', () => { typeTouched = true; F('type').classList.remove('ocr'); $('#type-sug').hidden = true; });
+function setType(code){ F('type').value = code; F('type').dispatchEvent(new Event('input')); }
+
+/* ---------- duplicate bill check ---------- */
+async function hashBlob(b){ return b64u(await crypto.subtle.digest('SHA-256', await b.arrayBuffer())); }
+function findDuplicate(m, e){
+  const amt = calc(e, m.entries).amount;
+  for(const x of m.entries){
+    if(editing && x.saved === editing.saved) continue;
+    if(e.photoHash && x.photoHash && x.photoHash === e.photoHash) return { x, sameImage: true };
+    if(x.date === e.date && x.type === e.type && Math.abs(x.amount - amt) < 0.005) return { x, sameImage: false };
+  }
+  return null;
+}
+
+/* ---------- edit a saved line ---------- */
+let editing = null;
+function startEdit(line){
+  const key = cfg.claimFolder, m = months[key], x = m && m.entries[line - 1];
+  if(!x) return;
+  editing = { key, saved: x.saved, line: x.line, hadPhoto: !!x.photo };
+  resetForm(true);
+  F('date').value = x.date;
+  if(isFuel(x.type) && x.type !== 'Fuel'){ F('type').value = 'Fuel'; F('fuel').value = x.type; } else F('type').value = x.type;
+  F('project').value = x.project || ''; F('location').value = x.location || ''; F('pax').value = x.pax || 1; F('names').value = x.names || '';
+  F('scope').value = x.scope || 'state'; F('vehicle').value = x.vehicle || 'Bike'; F('rate').value = x.fuelRate || ''; F('km').value = x.km || '';
+  F('bill').value = x.bill != null ? x.bill : ''; F('remarks').value = x.remarks || '';
+  typeTouched = true;
+  $('#edit-text').innerHTML = `✏️ Editing line ${x.line} of “${esc(key)}”. ${x.photo ? 'Its bill is kept unless you add a new one.' : ''}`;
+  $('#edit-bar').hidden = false; $('#btn-save').textContent = `Update line ${x.line}`;
+  document.querySelectorAll('.claimsel').forEach(sel => sel.disabled = true);
+  syncTypeFields(); refreshCalc();
+  document.querySelector('nav button[data-tab="add"]').click();
+  window.scrollTo(0, 0);
+}
+function endEdit(){
+  editing = null; $('#edit-bar').hidden = true; $('#btn-save').textContent = 'Save claim line';
+  document.querySelectorAll('.claimsel').forEach(sel => sel.disabled = false);
+}
+$('#btn-edit-cancel').onclick = () => { endEdit(); resetForm(true); };
+async function updateLine(ed, e, blob){
+  delete months[ed.key];
+  const m = await loadMonth(ed.key);
+  const x = m.entries.find(y => y.saved === ed.saved);
+  if(!x) throw new Error('That line was not found. It may have been deleted.');
+  const c = calc(e, m.entries.filter(y => y !== x));
+  if(blob){
+    status('Replacing the bill…', true);
+    if(x.photo) await delFile(m.folderId, x.photo);
+    const isPdf = blob.type === 'application/pdf';
+    x.photo = x.line + (isPdf ? '.pdf' : '.jpg');
+    x.photoUrl = (await putFile(m.folderId, x.photo, blob, isPdf ? 'application/pdf' : 'image/jpeg')).webUrl;
+    x.photoHash = e.photoHash || '';
+  }
+  Object.assign(x, { date: e.date, project: e.project, type: e.type, location: e.location, vehicle: e.vehicle, fuelRate: e.fuelRate,
+    km: e.km, pax: e.pax, names: e.names, scope: e.scope, bill: isFuel(e.type) ? null : e.bill, amount: c.amount, remarks: e.remarks,
+    edited: new Date().toISOString() });
+  status('Saving…', true);
+  await renumber(m, ed.key); await saveJson(ed.key);
+  try{ await saveExcel(ed.key); }catch(err){ staleExcel.add(ed.key); saveStale(); }
+  return x;
+}
+
+/* ---------- claim summary: project-wise, type-wise and food check ---------- */
+function claimSummary(m){
+  const by = (f) => { const o = {}; m.entries.forEach(e => { const k = f(e); (o[k] = o[k] || { lines: 0, total: 0 }); o[k].lines++; o[k].total = r2(o[k].total + e.amount); }); return o; };
+  const projects = by(e => e.project || '(no project)'), types = by(e => typeLabel(e.type));
+  const days = {};
+  m.entries.filter(e => e.type === 'Food').forEach(e => {
+    const d = days[e.date] = days[e.date] || { date: e.date, pax: 1, outside: false, claimed: 0 };
+    d.pax = Math.max(d.pax, +e.pax || 1); d.outside = d.outside || e.scope === 'outside'; d.claimed = r2(d.claimed + e.amount);
+  });
+  const food = Object.values(days).sort((a, b) => a.date.localeCompare(b.date)).map(d => Object.assign(d, { limit: (d.outside ? 700 : 500) * d.pax }));
+  const claimable = food.reduce((s, d) => s + d.limit, 0), claimed = r2(food.reduce((s, d) => s + d.claimed, 0));
+  return { projects, types, food, claimable, claimed, diff: r2(claimed - claimable) };
+}
+function summaryHtml(m){
+  if(!m.entries.length) return '';
+  const S = claimSummary(m);
+  let h = '';
+  if(S.food.length){
+    const over = S.diff > 0;
+    h += `<div class="sumbox"><h3>🍽️ Food check</h3>
+      <div class="food-figs"><div><b>${S.food.length}</b>day${S.food.length > 1 ? 's' : ''}</div><div><b>${inr(S.claimable)}</b>claimable</div><div><b>${inr(S.claimed)}</b>claimed</div></div>
+      <div class="note ${over ? 'err' : 'ok'}">${over ? `${inr(S.diff)} over the food limit for ${S.food.length} day${S.food.length > 1 ? 's' : ''}.` : `Within the food limit: ${inr(-S.diff)} below the claimable amount.`}</div>
+      <table><tr><th>Date</th><th>Area</th><th class="n">Persons</th><th class="n">Limit</th><th class="n">Claimed</th></tr>
+      ${S.food.map(d => `<tr><td>${dmy(d.date)}</td><td>${d.outside ? 'Outside' : 'Kerala'}</td><td class="n">${d.pax}</td><td class="n">${inr(d.limit)}</td><td class="n" style="${d.claimed > d.limit ? 'color:var(--err);font-weight:700' : ''}">${inr(d.claimed)}</td></tr>`).join('')}</table></div>`;
+  }
+  const tbl = (title, o) => `<div class="sumbox"><h3>${title}</h3><table><tr><th>${title.includes('Project') ? 'Project ID' : 'Expense type'}</th><th class="n">Lines</th><th class="n">Amount</th></tr>
+    ${Object.entries(o).map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${v.lines}</td><td class="n">${inr(v.total)}</td></tr>`).join('')}</table></div>`;
+  return h + tbl('📁 Project-wise', S.projects) + tbl('🧾 By expense type', S.types);
+}
+function summarySheet(key, m){
+  const S = claimSummary(m), A = (r, c) => XLSX.utils.encode_cell({ r, c });
+  const thin = { style: 'thin', color: { rgb: 'C9CED9' } }, border = { top: thin, bottom: thin, left: thin, right: thin };
+  const head = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '2D2A6E' } }, border, alignment: { vertical: 'center' } };
+  const title = { font: { bold: true, sz: 14, color: { rgb: '2D2A6E' } } }, sect = { font: { bold: true, sz: 12, color: { rgb: '0072BC' } } };
+  const money = '"₹" #,##0.00';
+  const rows = [], styles = [];
+  const put = (vals, st) => { rows.push(vals); styles.push(st || []); };
+  put(['Claim summary – ' + key], [title]); put([]);
+  put(['Project-wise'], [sect]);
+  put(['Project ID', 'Lines', 'Amount'], [head, head, head]);
+  Object.entries(S.projects).forEach(([k, v]) => put([k, v.lines, v.total], [{ border }, { border }, { border, numFmt: money }]));
+  const tot = r2(m.entries.reduce((s, e) => s + e.amount, 0));
+  put(['Total', m.entries.length, tot], [{ border, font: { bold: true } }, { border, font: { bold: true } }, { border, font: { bold: true }, numFmt: money }]);
+  put([]);
+  put(['By expense type'], [sect]);
+  put(['Expense type', 'Lines', 'Amount'], [head, head, head]);
+  Object.entries(S.types).forEach(([k, v]) => put([k, v.lines, v.total], [{ border }, { border }, { border, numFmt: money }]));
+  put([]);
+  put(['Food check (policy: ₹500 per person per day in Kerala and nearby districts, ₹700 outside the state)'], [sect]);
+  if(S.food.length){
+    put(['Date', 'Area', 'Persons', 'Claimable', 'Claimed', 'Difference'], [head, head, head, head, head, head]);
+    S.food.forEach(d => { const df = r2(d.claimed - d.limit);
+      put([dmy(d.date), d.outside ? 'Outside state' : 'Kerala / nearby', d.pax, d.limit, d.claimed, df],
+        [{ border }, { border }, { border }, { border, numFmt: money }, { border, numFmt: money }, { border, numFmt: money, font: { bold: true, color: { rgb: df > 0 ? 'B3261E' : '1B7F3A' } } }]); });
+    const b = { border, font: { bold: true } };
+    put([`Total: ${S.food.length} day${S.food.length > 1 ? 's' : ''}`, '', '', S.claimable, S.claimed, S.diff],
+      [b, b, b, Object.assign({ numFmt: money }, b), Object.assign({ numFmt: money }, b), { border, numFmt: money, font: { bold: true, color: { rgb: S.diff > 0 ? 'B3261E' : '1B7F3A' } } }]);
+    put([S.diff > 0 ? `Result: claimed ${inr(S.diff)} more than the food limit.` : `Result: within the food limit (${inr(-S.diff)} below).`],
+      [{ font: { bold: true, color: { rgb: S.diff > 0 ? 'B3261E' : '1B7F3A' } } }]);
+  }else put(['No food expenses in this claim.']);
+  const ws = XLSX.utils.aoa_to_sheet(rows);
+  styles.forEach((st, r) => st.forEach((sty, c) => { if(sty && ws[A(r, c)]) ws[A(r, c)].s = sty; }));
+  ws['!cols'] = [{ wch: 34 }, { wch: 16 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+  return ws;
+}
+
 /* ---------- tabs ---------- */
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   document.querySelectorAll('nav button').forEach(x => x.removeAttribute('aria-current'));
@@ -1399,6 +1793,7 @@ async function prepareTools(){
     await getOcrWorker();
     el.textContent = 'Bill reader ready. Downloading the scanner…';
     await loadCV();
+    try{ await loadPdfJs(); await fetch(PDFJS + 'pdf.worker.min.js'); }catch{}
     cfg.prepDone = true; saveCfg();
     el.textContent = '✓ Scanner and bill reader are ready.';
     setTimeout(() => el.hidden = true, 4000);
@@ -1417,7 +1812,7 @@ async function prepareTools(){
   renderSettings();
   if(!cfg.clientId || !account || !cfg.folderId){
     document.querySelector('nav button[data-tab="set"]').click();
-  } else { await loadClaimFolders(); preloadMonth(); }
+  } else { await loadClaimFolders(); preloadMonth(); checkReminder(); }
   updatePending(); flushQueue();
 })();
 </script>

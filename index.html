@@ -288,6 +288,7 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-rebuild">Rebuild Excel</button>
     <button class="ghost" id="btn-open">Open Excel</button>
   </div>
+  <p style="margin:8px 0 0"><button class="ghost" id="btn-xl-load" style="width:100%">Load Project ID changes from Excel</button></p>
   <p style="margin:8px 0 0"><button class="ghost" id="btn-fix-sub" style="width:100%">Fix bill links in submitted claims</button></p>
   <div class="list" id="l-items"></div>
   <div id="l-summary"></div>
@@ -522,6 +523,7 @@ async function loadMonth(key){
     fixed = true;
   });
   if(fixed){ await saveJson(key); await saveExcel(key); }
+  if(navigator.onLine){ try{ const ch = await syncFromExcel(key, m, false); if(ch) status(ch); }catch(e){ console.warn('Excel sync', e); } }
   return m;
 }
 async function saveJson(key){
@@ -534,6 +536,7 @@ async function saveExcel(key){
     const r = await putFile(m.folderId, `Expense_Claim_${key}.xlsx`, buildXlsx(key, m),
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     m.xlsxUrl = r.webUrl;
+    xlTags[m.folderId] = r.cTag || r.eTag; LS.set('xlTags', xlTags);
   }catch(e){
     if(e.status === 423 || e.status === 409) throw new Error('Entry saved, but the Excel file is open somewhere. Close it, then tap “Rebuild Excel” on the Claims tab.');
     throw e;
@@ -627,6 +630,8 @@ function buildXlsx(key, m){
   ws[A(tr+1,10)]= {t:'n', v:adv};
   ws[A(tr+2,9)] = {t:'s', v:'Balance'};
   ws[A(tr+2,10)]= {t:'n', v:r2(total-adv), f:`K${tr+1}-K${tr+2}`};
+  ws[A(tr,0)] = {t:'s', v:'Note: only the Project ID column may be edited in this Excel. Other changes are undone by the Travel Claims app.',
+    s:{font:{italic:true, color:{rgb:'B3261E'}}}};
   ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:tr+2, c:12}});
 
   for(let c = 0; c < 13; c++){
@@ -1357,6 +1362,7 @@ async function renderList(){
   box.innerHTML = '<p class="empty">Loading…</p>';
   try{
     const m = await loadMonth(key);
+    if(navigator.onLine){ try{ const ch = await syncFromExcel(key, m, false); if(ch) status(ch); }catch(e){ console.warn('Excel sync', e); } }
     const total = r2(m.entries.reduce((s, e) => s + e.amount, 0));
     $('#t-total').textContent = inr(total);
     $('#l-advance').value = m.advance || '';
@@ -1422,6 +1428,80 @@ $('#btn-open').onclick = async () => {
     if(!m.xlsxUrl){ const it = await (await g(`${D()}/${m.folderId}:/${enc('Expense_Claim_' + key + '.xlsx')}`)).json(); m.xlsxUrl = it.webUrl; }
     window.open(m.xlsxUrl, '_blank');
   }catch(err){ status(err.status === 404 ? 'No Excel file for this month yet.' : err.message); }
+};
+
+/* ---------- changes made by hand in the claim Excel flow back into the app ----------
+   The app remembers the version (cTag) of the Excel it last wrote. If the file in OneDrive has a different
+   version, someone edited it in Excel: its rows are read back and the claim data is updated to match. */
+const xlTags = LS.get('xlTags', {});
+const TYPE_FROM = (() => { const o = {}; Object.entries(TYPE_LABEL).forEach(([k, v]) => { o[v.toLowerCase()] = k; o[k.toLowerCase()] = k; });
+  o['petrol'] = 'Petrol'; o['diesel'] = 'Diesel'; o['fuel'] = 'Petrol'; return o; })();
+function typeFrom(v){
+  const t = String(v || '').trim().toLowerCase(); if(!t) return null;
+  const own = /own vehicle.*\((petrol|diesel)\)/.exec(t); if(own) return own[1] === 'diesel' ? 'Diesel' : 'Petrol';
+  return TYPE_FROM[t] || null;
+}
+function isoFrom(v){
+  if(typeof v === 'number' && v > 20000){ const d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 864e5); return d.toISOString().slice(0, 10); }
+  const m = /^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})$/.exec(String(v || '').trim());
+  if(!m) return null; const y = +m[3] < 100 ? 2000 + +m[3] : +m[3];
+  return `${y}-${String(+m[2]).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`;
+}
+const cleanRemarks = r => String(r || '')
+  .replace(/Shared bill ₹[\d,.]+ – (own share|share of .*?(\(bill on line \d+\))?)(?= – |$)/, '')
+  .replace(/(^| – )No bill$/, '').replace(/^ – | – $/g, '').trim();
+async function syncFromExcel(key, m, manual){
+  const name = `Expense_Claim_${key}.xlsx`;
+  let meta;
+  try{ meta = await (await g(`${D()}/${m.folderId}:/${enc(name)}?$select=cTag,eTag`)).json(); }
+  catch(e){ if(e.status === 404) return ''; throw e; }
+  const tag = meta.cTag || meta.eTag;
+  if(!manual && xlTags[m.folderId] === tag) return '';                      // not edited since the app wrote it
+  if(!xlTags[m.folderId] && !manual){ xlTags[m.folderId] = tag; LS.set('xlTags', xlTags); return ''; }   // first look on this phone
+  const buf = await (await g(`${D()}/${m.folderId}:/${enc(name)}:/content`)).arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' }), ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  const num = v => { const n = +String(v).replace(/[₹,\s]/g, ''); return isFinite(n) ? n : 0; };
+  const data = []; let advance = null;
+  for(let i = 1; i < rows.length; i++){
+    const r = rows[i], label = String(r[9] || '').trim().toLowerCase();
+    if(label === 'advance'){ advance = num(r[10]); continue; }
+    if(label === 'total' || label === 'balance') continue;
+    const date = isoFrom(r[1]);
+    if(!date || r[10] === '' || r[10] == null) continue;                       // not a claim line
+    data.push({ sl: +r[0] || 0, date, project: String(r[2] || '').trim(), type: typeFrom(r[3]), location: String(r[4] || '').trim(),
+      vehicle: String(r[5] || '').trim(), fuelRate: num(r[6]), km: num(r[7]), pax: Math.max(1, num(r[8]) || 1),
+      names: String(r[9] || '').trim(), amount: r2(num(r[10])), remarks: cleanRemarks(r[11]) });
+  }
+  if(!data.length && m.entries.length){ if(manual) throw new Error('No claim lines were found in the Excel, so nothing was changed.'); return ''; }
+  // Only the Project ID may be changed in the Excel. Everything else is taken from the app's data,
+  // so any other edit (amounts, dates, added or deleted rows, advance …) is undone when the Excel is rewritten.
+  let projects = 0, blocked = 0;
+  const seen = new Set();
+  for(const d of data){
+    const e = d.sl ? m.entries.find(x => x.line === d.sl) : null;
+    if(!e){ blocked++; continue; }                                   // row added in Excel → not accepted
+    seen.add(e);
+    if(d.project && d.project !== (e.project || '')){ e.project = d.project; e.editedInExcel = new Date().toISOString(); projects++; }
+    const fuel = isFuel(e.type);
+    const same = d.date === e.date && (d.type || e.type) === e.type && r2(d.amount) === r2(e.amount) && String(d.names) === String(e.names || '')
+      && +d.pax === (+e.pax || 1) && String(d.location) === String(e.location || '') && d.remarks === cleanRemarks(e.remarks || '')
+      && (!fuel || (r2(d.fuelRate) === r2(e.fuelRate) && r2(d.km) === r2(e.km)));
+    if(!same) blocked++;
+  }
+  blocked += m.entries.filter(e => !seen.has(e)).length;             // row deleted in Excel → not accepted
+  if(advance != null && r2(advance) !== r2(+m.advance || 0)) blocked++;
+  if(!projects && !blocked){ xlTags[m.folderId] = tag; LS.set('xlTags', xlTags); return manual ? 'The app already matches the Excel.' : ''; }
+  if(projects) await saveJson(key);
+  try{ await saveExcel(key); }                                        // rewrite the Excel from the app's data
+  catch(e){ xlTags[m.folderId] = tag; LS.set('xlTags', xlTags); if(blocked) return '⚠️ The Excel is open, so other changes could not be undone yet. Close it and tap Rebuild Excel.'; }
+  return [projects && `✓ Project ID updated on ${projects} line${projects > 1 ? 's' : ''}.`,
+          blocked && `⚠️ Only the Project ID can be changed in the Excel; ${blocked} other change${blocked > 1 ? 's were' : ' was'} undone.`].filter(Boolean).join(' ');
+}
+$('#btn-xl-load').onclick = async () => {
+  const key = cfg.claimFolder; if(!key){ status('Choose a claim folder first.'); return; }
+  try{ status('Reading the Excel…', true); const m = await loadMonth(key); const r = await syncFromExcel(key, m, true); status(r || 'No Excel file for this claim yet.'); renderList(); }
+  catch(err){ status(err.status === 423 ? 'The Excel is open and locked. Close it and try again.' : err.message, true); }
 };
 
 /* ---------- rebuild the Excel of every submitted claim with the new (relative) bill links ---------- */

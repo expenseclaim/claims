@@ -288,6 +288,7 @@ a{color:var(--brand)}
     <button class="ghost" id="btn-rebuild">Rebuild Excel</button>
     <button class="ghost" id="btn-open">Open Excel</button>
   </div>
+  <p style="margin:8px 0 0"><button class="ghost" id="btn-fix-sub" style="width:100%">Fix bill links in submitted claims</button></p>
   <div class="list" id="l-items"></div>
   <div id="l-summary"></div>
   <p style="margin-top:18px"><button class="primary" id="btn-submit" hidden>📤 Submit claim</button></p>
@@ -608,7 +609,7 @@ function buildXlsx(key, m){
     }
     if(!b) rem = [rem, 'No bill'].filter(Boolean).join(' – ');
     rows.push([e.line, dmy(e.date), e.project, typeLabel(e.type), e.location, fuel ? e.vehicle : '', fuel ? +e.fuelRate : '', fuel ? +e.km : '',
-      +e.pax || '', e.names, e.amount, rem, b ? 'View bill' : '']);
+      +e.pax || '', e.names, e.amount, rem, b ? `View bill (${b.photo})` : '']);
   });
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const n = m.entries.length;
@@ -644,7 +645,9 @@ function buildXlsx(key, m){
     const bb = billOf(e);
     if(bb){
       const lc = ws[A(r,12)];
-      lc.l = {Target:bb.photoUrl || bb.photo, Tooltip:'Open bill ' + bb.photo};
+      // relative link to the bill file in the SAME folder as the Excel, so it keeps working after the
+      // claim folder is copied or moved (e.g. to the finance team's shared folder)
+      lc.l = {Target:bb.photo, Tooltip:'Open bill ' + bb.photo + ' (in the same folder as this Excel)'};
       lc.s = {border, font:{color:{rgb:'0563C1'}, underline:true}, alignment:{horizontal:'center', vertical:'center'}};
     }
   });
@@ -652,7 +655,7 @@ function buildXlsx(key, m){
     ws[A(tr+k,9)].s  = {font:{bold:true, sz:12}, alignment:{horizontal:'right'}, border};
     ws[A(tr+k,10)].s = {font:{bold:true, sz:12}, numFmt:rupee, border};
   }
-  ws['!cols'] = [6,11,34,30,10,9,10,9,7,18,14,36,11].map(w => ({wch:w}));
+  ws['!cols'] = [6,11,34,30,10,9,10,9,7,18,14,36,17].map(w => ({wch:w}));
   ws['!rows'] = [{hpt:30}];
   ws['!autofilter'] = {ref:`A1:M${Math.max(n+1,1)}`};
   const wb = XLSX.utils.book_new();
@@ -1419,6 +1422,29 @@ $('#btn-open').onclick = async () => {
     if(!m.xlsxUrl){ const it = await (await g(`${D()}/${m.folderId}:/${enc('Expense_Claim_' + key + '.xlsx')}`)).json(); m.xlsxUrl = it.webUrl; }
     window.open(m.xlsxUrl, '_blank');
   }catch(err){ status(err.status === 404 ? 'No Excel file for this month yet.' : err.message); }
+};
+
+/* ---------- rebuild the Excel of every submitted claim with the new (relative) bill links ---------- */
+$('#btn-fix-sub').onclick = async () => {
+  if(!account || !cfg.folderId){ status('Please sign in and choose your folder first.'); return; }
+  try{
+    status('Looking for submitted claims…', true);
+    const sub = await ensureFolder(cfg.folderId, SUBMITTED);
+    const kids = (await (await g(`${D()}/${sub.id}/children?$select=id,name,folder&$top=200`)).json()).value.filter(x => x.folder);
+    let done = 0;
+    for(const f of kids){
+      const txt = await getText(f.id, 'claim-data.json'); if(!txt) continue;
+      const d = JSON.parse(txt), m = { entries: d.entries || [], advance: d.advance || 0, folderId: f.id };
+      // overwrite the claim's existing Excel file (its name may differ from the folder name)
+      const files = (await (await g(`${D()}/${f.id}/children?$select=name,file&$top=200`)).json()).value;
+      const xl = (files.find(x => x.file && /^Expense_Claim_.*\.xlsx$/i.test(x.name)) || {}).name || `Expense_Claim_${f.name}.xlsx`;
+      const key = xl.replace(/^Expense_Claim_/i, '').replace(/\.xlsx$/i, '');
+      status(`Updating ${f.name}…`, true);
+      await putFile(f.id, xl, buildXlsx(key, m), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      done++;
+    }
+    status(done ? `✓ Bill links fixed in ${done} submitted claim${done > 1 ? 's' : ''}.` : 'No submitted claims found.');
+  }catch(err){ status(err.status === 423 || err.status === 409 ? 'An Excel file is open somewhere. Close it and try again.' : err.message, true); }
 };
 
 /* ---------- submit a claim: finalise and move it to Submitted ---------- */

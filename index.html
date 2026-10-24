@@ -499,6 +499,20 @@ async function delFile(fid, name){
   try{ await g(`${D()}/${fid}:/${enc(name)}`, {method:'DELETE'}); }
   catch(e){ if(e.status !== 404) throw e; }
 }
+// a view-only link for people in StarOne IT; it is tied to the file itself, so it keeps working
+// when the file or its folder is renamed or moved (and from copies of the Excel elsewhere)
+async function shareLink(fid, name){
+  try{
+    const r = await (await g(`${D()}/${fid}:/${enc(name)}:/createLink`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'view', scope: 'organization' }) })).json();
+    return (r.link && r.link.webUrl) || '';
+  }catch(e){ return ''; }
+}
+async function ensureLinks(m){                       // adds a lasting link to every bill that has none yet
+  let n = 0;
+  for(const e of m.entries) if(e.photo && !e.shareUrl){ const u = await shareLink(m.folderId, e.photo); if(u){ e.shareUrl = u; n++; } }
+  return n;
+}
 const renameFile = (fid, from, to) =>
   g(`${D()}/${fid}:/${enc(from)}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name:to})});
 
@@ -652,7 +666,7 @@ function buildXlsx(key, m){
       const lc = ws[A(r,12)];
       // relative link to the bill file in the SAME folder as the Excel, so it keeps working after the
       // claim folder is copied or moved (e.g. to the finance team's shared folder)
-      lc.l = {Target:bb.photo, Tooltip:'Open bill ' + bb.photo + ' (in the same folder as this Excel)'};
+      lc.l = {Target:bb.shareUrl || bb.photo, Tooltip:'Open bill ' + bb.photo};
       lc.s = {border, font:{color:{rgb:'0563C1'}, underline:true}, alignment:{horizontal:'center', vertical:'center'}};
     }
   });
@@ -1291,12 +1305,13 @@ async function saveLine(key, e, blob, show){
     const isPdf = blob.type === 'application/pdf';
     photo = line + (isPdf ? '.pdf' : '.jpg'); say('Uploading bill ' + photo + '…');
     photoUrl = (await putFile(m.folderId, photo, blob, isPdf ? 'application/pdf' : 'image/jpeg')).webUrl;
+    var shareUrl = await shareLink(m.folderId, photo);
   }
   const splits = isFuel(e.type) ? [] : (e.splits || []);
   const gid = splits.length ? 'g' + Date.now().toString(36) : '';
   const entry = {line, date:e.date, project:e.project, type:e.type, location:e.location, vehicle:e.vehicle, fuelRate:e.fuelRate,
     km:e.km, pax:e.pax, names:e.names, scope:e.scope, meals:e.meals, bill:isFuel(e.type) ? null : (gid ? c.amount : e.bill),
-    amount:c.amount, remarks:e.remarks, photo, photoUrl, photoHash:e.photoHash || '', saved:new Date().toISOString()};
+    amount:c.amount, remarks:e.remarks, photo, photoUrl, shareUrl: (typeof shareUrl !== 'undefined' && shareUrl) || '', photoHash:e.photoHash || '', saved:new Date().toISOString()};
   if(gid) Object.assign(entry, { group: gid, groupTotal: r2(e.bill), groupMain: true });
   m.entries.push(entry);
   splits.forEach((sp, i) => m.entries.push({ line: 0, date: e.date, project: sp.project, type: e.type, location: e.location, vehicle: '', fuelRate: 0, km: 0,
@@ -1418,7 +1433,7 @@ $('#l-advance').addEventListener('input', () => {
 });
 $('#btn-rebuild').onclick = async () => {
   const key = cfg.claimFolder;
-  try{ status('Rebuilding Excel…', true); delete months[key]; const m = await loadMonth(key); await renumber(m, key); await saveJson(key); await saveExcel(key); status('Excel rebuilt'); renderList(); }
+  try{ status('Rebuilding Excel…', true); delete months[key]; const m = await loadMonth(key); await renumber(m, key); await ensureLinks(m); await saveJson(key); await saveExcel(key); status('Excel rebuilt'); renderList(); }
   catch(err){ status(err.message); }
 };
 $('#btn-open').onclick = async () => {
@@ -1515,6 +1530,8 @@ $('#btn-fix-sub').onclick = async () => {
     for(const f of kids){
       const txt = await getText(f.id, 'claim-data.json'); if(!txt) continue;
       const d = JSON.parse(txt), m = { entries: d.entries || [], advance: d.advance || 0, folderId: f.id };
+      status(`Adding lasting bill links in ${f.name}…`, true);
+      if(await ensureLinks(m)) await putFile(f.id, 'claim-data.json', JSON.stringify(Object.assign({}, d, { entries: m.entries }), null, 1), 'application/json');
       // overwrite the claim's existing Excel file (its name may differ from the folder name)
       const files = (await (await g(`${D()}/${f.id}/children?$select=name,file&$top=200`)).json()).value;
       const xl = (files.find(x => x.file && /^Expense_Claim_.*\.xlsx$/i.test(x.name)) || {}).name || `Expense_Claim_${f.name}.xlsx`;
@@ -1854,6 +1871,7 @@ async function updateLine(ed, e, blob){
     const isPdf = blob.type === 'application/pdf';
     x.photo = x.line + (isPdf ? '.pdf' : '.jpg');
     x.photoUrl = (await putFile(m.folderId, x.photo, blob, isPdf ? 'application/pdf' : 'image/jpeg')).webUrl;
+    x.shareUrl = await shareLink(m.folderId, x.photo);
     x.photoHash = e.photoHash || '';
   }
   Object.assign(x, { date: e.date, project: e.project, type: e.type, location: e.location, vehicle: e.vehicle, fuelRate: e.fuelRate,
